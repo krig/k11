@@ -1,0 +1,29 @@
+@import sys
+
+#:toolsearch gcc
+
+OPTIMIZE = 1
+DEBUG = yes
+STRIP =
+
+CC = /opt/bin/gcc-4.7
+CXX = /opt/bin/g++-4.7
+CFLAGS += -Wall -Wextra -Werror -Wno-unused -DDEBUG=1
+CXXFLAGS += -Wall -Wextra -Werror -Wno-unused -std=c++0x -DDEBUG=1
+LDFLAGS += -Wall
+INCLUDE += -isystem /opt/include
+        
+@if sys.platform == 'darwin':
+    LIBS += -L/opt/lib
+    LIBS += -lpthread
+@else:
+    LIBS += -L/opt/lib
+    LIBS += -Wl,-Bdynamic -lpthread
+
+:mkdir {force} bin
+
+:program bin/async : src/tests/async.cpp
+:program bin/initlist : src/tests/initlist.cpp
+:program bin/life : src/tests/life.cpp
+:program bin/print : src/tests/print.cpp
+

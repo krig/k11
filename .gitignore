@@ -1,0 +1,14 @@
+build/**
+build-Darwin10_8_0/**
+.lock-waf_darwin_build
+.lock-wafbuild
+.waf-*
+.#*
+xcuserdata
+*.o
+*.pyc
+.aapdir/**
+bin/**
+attic/**
+.DS_Store
+
