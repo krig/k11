@@ -26,4 +26,4 @@ INCLUDE += -isystem /opt/include
 :program bin/initlist : src/tests/initlist.cpp
 :program bin/life : src/tests/life.cpp
 :program bin/print : src/tests/print.cpp
-
+:program bin/looping : src/tests/looping.cpp

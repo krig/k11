@@ -82,44 +82,47 @@ namespace print {
             return f;
         }
 
+        template <typename T>
+        void check_type(const char* f) {
+            switch (*f) {
+            default: throw bad_format("unknown format code");
+            case 'f': case 'g': case 'e': case 'E': case 'G': case 'a': case 'A':
+                enforce(std::is_floating_point<T>::value, "non-floating point value to %(f) or %(g)");
+                break;
+            case 's':
+                enforce(std::is_same<T, bool>::value ||
+                        std::is_same<T, std::string>::value ||
+                        std::is_same<T, const char*>::value, "non-string value to %(s)");
+                break;
+            case 'd': case 'i':
+                enforce(std::is_signed<T>::value, "non-signed value to %(d) or %(i)");
+                break;
+            case 'u':
+                enforce(std::is_unsigned<T>::value, "non-unsigned value to %(u)");
+                break;
+            case 'p':
+                enforce(std::is_pointer<T>::value, "non-pointer value to %(p)");
+                break;
+            case 'x': case 'X': case 'o':
+                enforce(std::is_integral<T>::value, "non-integral value to %(x) or %(X)");
+                break;
+            case 'c':
+                enforce(std::is_integral<T>::value, "non-char value to %(c)");
+                break;
+            case 'n':
+                enforce(false, "%(n) is not allowed");
+                break;
+            }
+        }
+
         template <class T, typename... Ts>
         void check(const char* f, const T& t,
                       const Ts&... ts) {
             for (; *f; ++f) {
                 if (*f != '%' || *++f == '%') continue;
-
                 // TODO: verify modifier stuff
                 f = skip_modifiers(f);
-
-                switch (*f) {
-                default: throw bad_format("unknown format code");
-                case 'f': case 'g': case 'e': case 'E': case 'G': case 'a': case 'A':
-                    enforce(std::is_floating_point<T>::value, "non-floating point value to %(f) or %(g)");
-                    break;
-                case 's':
-                    enforce(std::is_same<T, bool>::value ||
-                            std::is_same<T, std::string>::value ||
-                            std::is_same<T, const char*>::value, "non-string value to %(s)");
-                    break;
-                case 'd': case 'i':
-                    enforce(std::is_signed<T>::value, "non-signed value to %(d) or %(i)");
-                    break;
-                case 'u':
-                    enforce(std::is_unsigned<T>::value, "non-unsigned value to %(u)");
-                    break;
-                case 'p':
-                    enforce(std::is_pointer<T>::value, "non-pointer value to %(p)");
-                    break;
-                case 'x': case 'X': case 'o':
-                    enforce(std::is_integral<T>::value, "non-integral value to %(x) or %(X)");
-                    break;
-                case 'c':
-                    enforce(std::is_integral<T>::value, "non-char value to %(c)");
-                    break;
-                case 'n':
-                    enforce(false, "%(n) is not allowed");
-                    break;
-                }
+                check_type<T>(f);
                 return check(++f, ts...); // variadic recursion
             }
             throw bad_format("missing arguments to pr()");
