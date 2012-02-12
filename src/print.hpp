@@ -3,6 +3,7 @@
 #include <type_traits>
 #include <string>
 #include <stdexcept>
+#include <sstream>
 
 // adapted from example given by Andre Alexandrescu
 // at GoingNative 2012
@@ -123,6 +124,15 @@ namespace print {
             }
             throw bad_format("missing arguments to pr()");
         }
+
+        void to_str_rec(std::stringstream& ss) {
+        }
+
+        template <class T, typename... Ts>
+        void to_str_rec(std::stringstream& ss, const T& t, const Ts&... ts) {
+            ss << " " << t;
+            to_str_rec(ss, ts...);
+        }
     }
 
     template <typename... Ts>
@@ -148,6 +158,14 @@ namespace print {
     template<typename... Ts>
     int pn(const char* f, const Ts&... ts) {
         return fpn(stdout, f, ts...);
+    }
+
+    template <class T, typename... Ts>
+    std::string to_str(const T& t, const Ts&... ts) {
+        std::stringstream ss;
+        ss << t;
+        internal::to_str_rec(ss, ts...);
+        return ss.str();
     }
 
     /* not sure how to do sprintf typechecked in a good way
