@@ -165,7 +165,7 @@ namespace print {
         std::stringstream ss;
         ss << t;
         internal::to_str_rec(ss, ts...);
-        return ss.str();
+        return std::move(ss.str());
     }
 
     /* not sure how to do sprintf typechecked in a good way
