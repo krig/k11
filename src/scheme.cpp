@@ -66,7 +66,7 @@ sexpr list(const Ts&... ts) {
     return sexpr(v);
 }
 
-class atom_stringer : public boost::static_visitor<std::string>
+class atom2s : public boost::static_visitor<std::string>
 {
 public:
     std::string operator()(const std::string& value) const {
@@ -88,13 +88,13 @@ public:
     }
 };
 
-class list_stringer : public boost::static_visitor<std::string>
+class sexpr2s : public boost::static_visitor<std::string>
 {
 public:
 
     std::string operator()(const atom& a) const
     {
-        return boost::apply_visitor(atom_stringer(), a);
+        return boost::apply_visitor(atom2s(), a);
     }
 
     std::string operator()(const std::vector<sexpr>& v) const
@@ -107,7 +107,7 @@ public:
                 first = false;
             else
                 ss << " ";
-            ss << boost::apply_visitor(list_stringer(), *i);
+            ss << boost::apply_visitor(sexpr2s(), *i);
         }
         ss << ")";
         return ss.str();
@@ -116,11 +116,11 @@ public:
 };
 
 std::string to_str(const sexpr& l) {
-    return boost::apply_visitor(list_stringer(), l);
+    return boost::apply_visitor(sexpr2s(), l);
 }
 
 std::string to_str(const atom& a) {
-    return boost::apply_visitor(atom_stringer(), a);
+    return boost::apply_visitor(atom2s(), a);
 }
 
 struct streamptr {
@@ -153,7 +153,7 @@ struct streamptr {
         bool flt = false;
         const char* n = _s;
         const char* e = _s;
-        while (isdigit(*e) || *e == '.' || *e == '-') {
+        while (!isspace(*e) && *e != ')' && *e != '\0') {
             if (*e == '.')
                 flt = true;
             ++e;
