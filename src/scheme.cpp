@@ -1,4 +1,5 @@
 // Fun with variadic templates and boost::variant
+// an implementation of http://norvig.com/lispy.html in C++11 (sort of)
 // compile with gcc 4.7+
 // g++-4.7 -std=c++0x -o scheme scheme.cpp
 // or clang (HEAD)
@@ -31,48 +32,44 @@ public:
     }
 };
 
-typedef boost::variant<int, double, std::string, symbol> atom;
+typedef boost::variant<double, std::string, symbol> atom;
 typedef boost::make_recursive_variant<atom,
                                       std::vector<boost::recursive_variant_>,
                                       boost::function1<boost::recursive_variant_, const boost::any&>>::type sexpr;
 typedef std::vector<sexpr> sexprs;
 typedef boost::function1<sexpr, const boost::any&> lambda;
 
-void pushbacker(sexprs& v, int a) {
+void vec_arg(sexprs& v, int a) {
+    v.push_back(atom((double)a));
+}
+
+void vec_arg(sexprs& v, double a) {
     v.push_back(atom(a));
 }
 
-void pushbacker(sexprs& v, double a) {
+void vec_arg(sexprs& v, const symbol& a) {
     v.push_back(atom(a));
 }
 
-void pushbacker(sexprs& v, const symbol& a) {
+void vec_arg(sexprs& v, const std::string& a) {
     v.push_back(atom(a));
 }
 
-void pushbacker(sexprs& v, const std::string& a) {
-    v.push_back(atom(a));
-}
-
-void pushbacker(sexprs& v, const atom& a) {
-    v.push_back(a);
-}
-
-void pushbacker(sexprs& v, const sexpr& l) {
+void vec_arg(sexprs& v, const sexpr& l) {
     v.push_back(l);
 }
 
 template <class T, typename... Ts>
-void pushbacker(sexprs& v, const T& t, const Ts&... ts) {
+void vec_arg(sexprs& v, const T& t, const Ts&... ts) {
     v.push_back(t);
-    pushbacker(v, ts...);
+    vec_arg(v, ts...);
 }
 
 template <typename... Ts>
 sexpr list(const Ts&... ts) {
     sexprs v;
     v.reserve(sizeof...(ts));
-    pushbacker(v, ts...);
+    vec_arg(v, ts...);
     return sexpr(v);
 }
 
@@ -87,10 +84,6 @@ public:
 
     std::string operator()(const symbol& value) const {
         return value;
-    }
-
-    std::string operator()(int value) const {
-        return boost::lexical_cast<std::string>(value);
     }
 
     std::string operator()(double value) const {
@@ -153,42 +146,20 @@ struct streamptr {
             ++_s;
         return *_s++;
     }
-
-    atom read_string() {
-        next();
-        const char* sb = _s;
-        const char* se = strchr(sb, '"');
-        _s = se+1;
-        return std::string(sb, se);
-    }
-
-    atom read_number() {
-        bool flt = false;
-        const char* n = _s;
-        const char* e = _s;
-        while (!isspace(*e) && *e != ')' && *e != '\0') {
-            if (*e == '.')
-                flt = true;
-            ++e;
-        }
-        _s = e;
-        std::string sn(n, e);
-        if (flt) {
-            return boost::lexical_cast<double>(sn);
-        }
-        else {
-            return boost::lexical_cast<int>(sn);
-        }
-    }
-    atom read_symbol() {
-        const char* s = _s;
-        const char* e = s;
-        while (*e != ')' && *e != '\0' && !isspace(*e))
-            ++e;
-        _s = e;
-        return atom(symbol(s, e));
-    }
 };
+
+sexpr parse_atom(const char* b, const char* e) {
+    if (((*b == '-' || *b == '.') && isdigit(*(b+1))) ||
+        isdigit(*b)) {
+        return atom(boost::lexical_cast<double>(std::string(b, e)));
+    }
+    else if (*b == '"') {
+        return atom(std::string(b+1, e-1));
+    }
+    else {
+        return atom(symbol(b, e));
+    }
+}
 
 sexpr readref(streamptr& s) {
     if (s.eof()) {
@@ -205,18 +176,17 @@ sexpr readref(streamptr& s) {
     else if (s.peek() == ')') {
         throw std::runtime_error("mismatched )");
     }
-    else if (s.peek() == '"') {
-        return s.read_string();
-    }
-    else if (isdigit(s.peek()) || s.peek() == '.' || s.peek() == '-') {
-        return s.read_number();
-    }
     else if (s.peek() == '\'') {
         s.next();
         return list(atom(symbol("quote")), readref(s));
     }
     else {
-        return s.read_symbol();
+        const char* b = s._s;
+        const char* e = s._s+1;
+        while (!isspace(*e) && *e != ')' && *e != '\0')
+            ++e;
+        s._s = e;
+        return parse_atom(b, e);
     }
 }
 
@@ -388,30 +358,30 @@ sexpr eval(const sexpr& x, const envptr& env) {
     return x;
 }
 
-sexpr add(const boost::any& arghack) {
-    const sexprs& args = boost::any_cast<const sexprs&>(arghack);
-    double dsum = 0.0;
-    int isum = 0;
-    bool flt = false;
-    for (auto i = args.begin(); i != args.end(); ++i) {
-        const atom& a = boost::get<atom>(*i);
-        if (const int* ival = boost::get<int>(&a)) {
-            isum += *ival;
-        }
-        else if (const double* fval = boost::get<double>(&a)) {
-            dsum += *fval;
-            flt = true;
-        }
-        else {
-            throw std::runtime_error("Invalid argument to add");
-        }
+namespace {
+    using namespace boost;
+
+    sexpr add(const any& arghack) {
+        const sexprs& args = any_cast<const sexprs&>(arghack);
+        double sum = 0.0;
+        for (auto i = args.begin(); i != args.end(); ++i)
+            sum += get<double>(get<atom>(*i));
+        return atom(sum);
     }
-    if (flt) {
-        return atom(dsum + (double)isum);
+
+sexpr sub(const any& arghack) {
+    const sexprs& args = any_cast<const sexprs&>(arghack);
+    if (args.size() == 1) {
+        return atom(-get<double>(get<atom>(args.front())));
     }
     else {
-        return atom(isum);
+        auto i = args.begin();
+        double sum = get<double>(get<atom>(*i++));
+        for (; i != args.end(); ++i)
+            sum -= get<double>(get<atom>(*i));
+        return atom(sum);
     }
+}
 }
 
 int main(int argc, char* argv[]) {
@@ -421,7 +391,8 @@ int main(int argc, char* argv[]) {
 
     global_env->add("true", atom(symbol("true")))
         .add("false", sexprs())
-        .add("+", lambda(add));
+        .add("+", lambda(add))
+        .add("-", lambda(sub));
     while (true) {
         std::cout << ">>> " << std::flush;
         std::cin.getline(tmp, SZ);
@@ -430,10 +401,12 @@ int main(int argc, char* argv[]) {
         if (strcmp(tmp, "quit") == 0)
             break;
         try {
-            std::cout << to_str(eval(read(tmp), global_env)) << std::endl;
+            sexpr exp = eval(read(tmp), global_env);
+            global_env->add("_", exp);
+            std::cout << "_: " << to_str(exp) << std::endl;
         }
-        catch (std::runtime_error& e) {
-            std::cout << e.what() << std::endl;
+        catch (std::exception& e) {
+            std::cout << "Error: " << e.what() << std::endl;
         }
     }
 }
