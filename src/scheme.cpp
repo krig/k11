@@ -1,4 +1,6 @@
 // Fun with variadic templates and boost::variant
+// compile with gcc 4.7+
+// /opt/bin/g++-4.7 -std=c++0x -I/opt/include -o scheme scheme.cpp
 
 #include <boost/variant.hpp>
 #include <boost/variant/apply_visitor.hpp>
@@ -9,29 +11,41 @@
 #include <sstream>
 #include <stdexcept>
 #include <stdlib.h>
+#include "print.hpp"
 
-typedef boost::variant<int, float, std::string> atom;
-typedef boost::make_recursive_variant<atom, std::vector<boost::recursive_variant_>>::type list;
+class symbol : public std::string {
+public:
+    symbol() : std::string() {
+    }
+    symbol(const char* a, const char* b) : std::string(a, b) {
+    }
+    explicit symbol(const std::string& o) : std::string(o) {
+    }
+};
 
-void pushbacker(std::vector<list>& v, const atom& a) {
+typedef boost::variant<int, float, std::string, symbol> atom;
+typedef boost::make_recursive_variant<atom, std::vector<boost::recursive_variant_>>::type sexpr;
+
+void pushbacker(std::vector<sexpr>& v, const atom& a) {
     v.push_back(a);
 }
 
-void pushbacker(std::vector<list>& v, const list& l) {
+void pushbacker(std::vector<sexpr>& v, const sexpr& l) {
     v.push_back(l);
 }
 
 template <class T, typename... Ts>
-void pushbacker(std::vector<list>& v, const T& t, const Ts&... ts) {
+void pushbacker(std::vector<sexpr>& v, const T& t, const Ts&... ts) {
     v.push_back(t);
     pushbacker(v, ts...);
 }
 
 template <typename... Ts>
-list make_list(const Ts&... ts) {
-    std::vector<list> v;
+sexpr list(const Ts&... ts) {
+    std::vector<sexpr> v;
+    v.reserve(sizeof...(ts));
     pushbacker(v, ts...);
-    return list(v);
+    return sexpr(v);
 }
 
 class atom_stringer : public boost::static_visitor<std::string>
@@ -41,6 +55,10 @@ public:
         std::stringstream ss;
         ss << '"' << value << '"';
         return ss.str();
+    }
+
+    std::string operator()(const symbol& value) const {
+        return value;
     }
 
     std::string operator()(int value) const {
@@ -61,12 +79,12 @@ public:
         return boost::apply_visitor(atom_stringer(), a);
     }
 
-    std::string operator()(const std::vector<list>& v) const
+    std::string operator()(const std::vector<sexpr>& v) const
     {
         std::stringstream ss;
         ss << "(";
         bool first = true;
-        for (std::vector<list>::const_iterator i = v.begin(); i != v.end(); ++i) {
+        for (std::vector<sexpr>::const_iterator i = v.begin(); i != v.end(); ++i) {
             if (first)
                 first = false;
             else
@@ -79,11 +97,11 @@ public:
 
 };
 
-std::string list_to_string(const list& l) {
+std::string to_str(const sexpr& l) {
     return boost::apply_visitor(list_stringer(), l);
 }
 
-std::string atom_to_string(const atom& a) {
+std::string to_str(const atom& a) {
     return boost::apply_visitor(atom_stringer(), a);
 }
 
@@ -131,11 +149,19 @@ struct streamptr {
             return boost::lexical_cast<int>(sn);
         }
     }
+    atom read_symbol() {
+        const char* s = _s;
+        const char* e = s;
+        while (*e != ')' && *e != '\0' && !isspace(*e))
+            ++e;
+        _s = e;
+        return atom(symbol(s, e));
+    }
 };
 
-list readref(streamptr& s) {
+sexpr readref(streamptr& s) {
     if (s.peek() == '(') {
-        std::vector<list> v;
+        std::vector<sexpr> v;
         s.next();
         while (s.peek() != ')')
             v.push_back(readref(s));
@@ -151,23 +177,31 @@ list readref(streamptr& s) {
     else if (isdigit(s.peek())) {
         return s.read_number();
     }
+    else if (s.peek() == '\'') {
+        s.next();
+        return list(atom(symbol("quote")), readref(s));
+    }
     else {
-        throw std::runtime_error("unexpected state");
+        return s.read_symbol();
     }
 }
 
-list read(const char* s) {
-    streamptr buf(s);
-    return readref(buf);
+sexpr read(const char* s) {
+    streamptr sp(s);
+    return readref(sp);
 }
 
 int main() {
-    list l = make_list(atom(3), atom("hello world"), make_list(atom(6), atom(9.3f)));
-    list l2 = make_list(l, l);
-    list l3 = read("(1 2 3 \"4\" (4 5 6))");
+    using namespace print;
 
-    std::string s1 = list_to_string(l);
-    std::string s2 = list_to_string(l2);
-    std::string s3 = list_to_string(l3);
-    printf("%s\n%s\n%s\n", s1.c_str(), s2.c_str(), s3.c_str());
+    sexpr l1 = list(atom(3), atom("hello world"), list(atom(6), atom(9.3f)));
+    sexpr l2 = read("(fn (x) (1 2 3 \"wee\" '(4 5 6)))");
+    sexpr l3 = list(l1, l2);
+
+    std::string s1 = to_str(l1);
+    std::string s2 = to_str(l2);
+    std::string s3 = to_str(l3);
+
+    pn("sizeof %d", sizeof(l3));
+    pn("%s\n%s\n%s", s1, s2, s3);
 }
