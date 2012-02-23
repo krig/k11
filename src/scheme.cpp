@@ -153,7 +153,7 @@ struct streamptr {
         bool flt = false;
         const char* n = _s;
         const char* e = _s;
-        while (isdigit(*e) || *e == '.') {
+        while (isdigit(*e) || *e == '.' || *e == '-') {
             if (*e == '.')
                 flt = true;
             ++e;
@@ -192,7 +192,7 @@ sexpr readref(streamptr& s) {
     else if (s.peek() == '"') {
         return s.read_string();
     }
-    else if (isdigit(s.peek())) {
+    else if (isdigit(s.peek()) || s.peek() == '.' || s.peek() == '-') {
         return s.read_number();
     }
     else if (s.peek() == '\'') {
@@ -213,7 +213,7 @@ int main() {
     using namespace print;
 
     sexpr l1 = list(atom(3), atom("hello world"), list(atom(6), atom(9.3f)));
-    sexpr l2 = read("(fn (x) (1 2 3 \"wee\" '(4 5 6)))");
+    sexpr l2 = read("(fn (x) (1 -2 .3 \"wee\" '(4 5 6)))");
     sexpr l3 = list(l1, l2);
     sexpr l4 = list(symbol("def"), symbol("z"), list(1, 2, "hello", list(7, 9)));
 
