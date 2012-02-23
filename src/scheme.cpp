@@ -19,12 +19,30 @@ public:
     }
     symbol(const char* a, const char* b) : std::string(a, b) {
     }
+    explicit symbol(const char* s) : std::string(s) {
+    }
     explicit symbol(const std::string& o) : std::string(o) {
     }
 };
 
 typedef boost::variant<int, float, std::string, symbol> atom;
 typedef boost::make_recursive_variant<atom, std::vector<boost::recursive_variant_>>::type sexpr;
+
+void pushbacker(std::vector<sexpr>& v, int a) {
+    v.push_back(atom(a));
+}
+
+void pushbacker(std::vector<sexpr>& v, float a) {
+    v.push_back(atom(a));
+}
+
+void pushbacker(std::vector<sexpr>& v, const symbol& a) {
+    v.push_back(atom(a));
+}
+
+void pushbacker(std::vector<sexpr>& v, const std::string& a) {
+    v.push_back(atom(a));
+}
 
 void pushbacker(std::vector<sexpr>& v, const atom& a) {
     v.push_back(a);
@@ -197,11 +215,12 @@ int main() {
     sexpr l1 = list(atom(3), atom("hello world"), list(atom(6), atom(9.3f)));
     sexpr l2 = read("(fn (x) (1 2 3 \"wee\" '(4 5 6)))");
     sexpr l3 = list(l1, l2);
+    sexpr l4 = list(symbol("def"), symbol("z"), list(1, 2, "hello", list(7, 9)));
 
     std::string s1 = to_str(l1);
     std::string s2 = to_str(l2);
     std::string s3 = to_str(l3);
 
     pn("sizeof %d", sizeof(l3));
-    pn("%s\n%s\n%s", s1, s2, s3);
+    pn("%s\n%s\n%s\n%s", s1, s2, s3, to_str(l4));
 }
