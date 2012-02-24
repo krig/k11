@@ -18,6 +18,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <iostream>
+#include <fstream>
 #include <stdlib.h>
 
 class symbol : public std::string {
@@ -159,7 +160,7 @@ struct streamptr {
         return *_s;
     }
     bool eof() const {
-        return *_s == 0;
+        return *_s == 0 || *_s == ';';
     }
     char next() {
         while (isspace(*_s))
@@ -203,8 +204,17 @@ sexpr parse_atom(const char* b, const char* e) {
 }
 
 sexpr readref(streamptr& s) {
+    // skip comment
+    if (s.peek() == ';') {
+        while (s.next() != '\n' && !s.eof())
+            ;
+    }
+
     if (s.eof()) {
-        throw std::runtime_error("unexpected eof");
+        return sexprs();
+    }
+    else if (s.peek() == '\n') {
+        return sexprs();
     }
     else if (s.peek() == '(') {
         sexprs v;
@@ -220,6 +230,16 @@ sexpr readref(streamptr& s) {
     else if (s.peek() == '\'') {
         s.next();
         return list(atom(symbol("quote")), readref(s));
+    }
+    else if (s.peek() == '`') {
+        s.next();
+        return list(atom(symbol("quasiquote")), readref(s));
+    }
+    else if (s.peek() == ',') {
+        s.next();
+        if (s.peek() == '@')
+            return list(atom(symbol("unquote-splicing")), readref(s));
+        return list(atom(symbol("unquote")), readref(s));
     }
     else if (s.peek() == '"') {
         const char* b = s._s+1;
@@ -461,6 +481,7 @@ std::string pr_to_str(const sexpr& l) {
     return boost::apply_visitor(prsexpr2s(), l);
 }
 
+void repl(std::istream& in, bool prompt, bool out);
 
 namespace {
     using namespace boost;
@@ -644,16 +665,56 @@ namespace {
         return *args.begin();
     }
 
+    sexpr loadfn(const any& arghack) {
+        const auto& args = any_cast<const sexprs&>(arghack);
+        if (args.size() != 1)
+            throw std::runtime_error("incorrect # of arguments to load");
+
+        std::string fname = get<std::string>(get<atom>(args.front()));
+
+        std::ifstream f(fname.c_str());
+        repl(f, false, false);
+
+        return sexprs();
+    }
+
+}
+
+void repl(std::istream& in, bool prompt, bool out) {
+    const int SZ = 1024;
+    char tmp[SZ];
+    while (true) {
+        if (prompt)
+            std::cout << ">>> " << std::flush;
+        in.getline(tmp, SZ);
+        if (in.eof())
+            break;
+        if (tmp[0] == '\0')
+            continue;
+        if (strcmp(tmp, "quit") == 0)
+            break;
+        try {
+            sexpr exp = eval(read(tmp), global_env);
+            global_env->add("_", exp);
+            if (out)
+                std::cout << "_: " << to_str(exp) << std::endl;
+        }
+        catch (boost::bad_get& e) {
+            std::cerr << "error: type mismatch" << std::endl;
+        }
+        catch (std::exception& e) {
+            std::cerr << "error: " << e.what() << std::endl;
+        }
+    }
 }
 
 int main(int argc, char* argv[]) {
-    const int SZ = 1024;
-    char tmp[SZ];
+    sexpr nil = sexprs();
     global_env = envptr(new environment);
 
     global_env->add("true", atom(symbol("true")))
-        .add("false", sexprs())
-        .add("nil", sexprs())
+        .add("false", nil)
+        .add("nil", nil)
         .add("+", lambda(addfn))
         .add("-", lambda(subfn))
         .add("*", lambda(mulfn))
@@ -677,24 +738,7 @@ int main(int argc, char* argv[]) {
         .add("defvar", lambda(defvarfn))
         .add("global-env", lambda(envfn))
         .add("pr", lambda(prfn))
+        .add("load", lambda(loadfn))
         ;
-    while (true) {
-        std::cout << ">>> " << std::flush;
-        std::cin.getline(tmp, SZ);
-        if (std::cin.eof())
-            break;
-        if (strcmp(tmp, "quit") == 0)
-            break;
-        try {
-            sexpr exp = eval(read(tmp), global_env);
-            global_env->add("_", exp);
-            std::cout << "_: " << to_str(exp) << std::endl;
-        }
-        catch (boost::bad_get& e) {
-            std::cout << "error: type mismatch" << std::endl;
-        }
-        catch (std::exception& e) {
-            std::cout << "error: " << e.what() << std::endl;
-        }
-    }
+    repl(std::cin, true, true);
 }
