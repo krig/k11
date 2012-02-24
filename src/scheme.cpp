@@ -12,14 +12,16 @@
 #include <boost/function.hpp>
 #include <boost/shared_ptr.hpp>
 #include <boost/any.hpp>
+#include <boost/type_traits.hpp>
+#include <boost/unordered_map.hpp>
 #include <vector>
-#include <map>
 #include <string>
 #include <sstream>
 #include <stdexcept>
 #include <iostream>
 #include <fstream>
 #include <stdlib.h>
+#include <math.h>
 
 class symbol : public std::string {
 public:
@@ -305,7 +307,7 @@ public:
     }
 
     boost::shared_ptr<environment> _parent;
-    std::map<std::string, sexpr> _env;
+    boost::unordered_map<std::string, sexpr> _env;
 };
 
 typedef boost::shared_ptr<environment> envptr;
@@ -341,8 +343,52 @@ struct lambda_impl {
     envptr _parent;
 };
 
+template <int, typename Fn>
+struct lambda_impl_2;
+
+template <typename Fn>
+struct lambda_impl_2<0, Fn> {
+    lambda_impl_2(const Fn& fn) : _fn(fn) {
+    }
+    sexpr operator()(const boost::any& arghack) {
+        const sexprs& args = boost::any_cast<const sexprs&>(arghack);
+        if (args.size() != 0) throw std::runtime_error("bad arity");
+        return _fn();
+    }
+    boost::function<Fn> _fn;
+};
+
+template <typename Fn>
+struct lambda_impl_2<1, Fn> {
+    lambda_impl_2(const Fn& fn) : _fn(fn) {
+    }
+    sexpr operator()(const boost::any& arghack) {
+        const sexprs& args = boost::any_cast<const sexprs&>(arghack);
+        if (args.size() != 1) throw std::runtime_error("bad arity");
+        return _fn(args[0]);
+    }
+    boost::function<Fn> _fn;
+};
+
+template <typename Fn>
+struct lambda_impl_2<2, Fn> {
+    lambda_impl_2(const Fn& fn) : _fn(fn) {
+    }
+    sexpr operator()(const boost::any& arghack) {
+        const sexprs& args = boost::any_cast<const sexprs&>(arghack);
+        if (args.size() != 2) throw std::runtime_error("bad arity");
+        return _fn(args[0], args[1]);
+    }
+    boost::function<Fn> _fn;
+};
+
 sexpr make_lambda(const sexprs& vars, const sexpr& exp, const envptr& env) {
     return lambda(lambda_impl(vars, exp, env));
+}
+
+template <typename Fn>
+sexpr make_lambda(const Fn& fn) {
+    return lambda(lambda_impl_2<boost::function_traits<Fn>::arity, Fn>(fn));
 }
 
 sexpr eval(const sexpr& x, const envptr& env) {
@@ -538,8 +584,8 @@ namespace {
         return any_cast<const sexprs&>(arghack);
     }
 
-    sexpr lenfn(const any& arghack) {
-        return atom((double)get<sexprs>(any_cast<const sexprs&>(arghack).front()).size());
+    sexpr lenfn(const sexpr& lst) {
+        return atom((double)get<sexprs>(lst).size());
     }
 
     sexpr carfn(const any& arghack) {
@@ -602,9 +648,11 @@ namespace {
     }
 
     sexpr envfn(const any& arghack) {
+        int w = 4;
         auto i = global_env->_env.begin(), e = global_env->_env.end();
         for (; i != e; ++i) {
-            std::cout << i->first << "\n";
+            std::cout << i->first << ((--w == 0) ? "\n" : "\t");
+            if (w == 0) w = 4;
         }
         return sexprs();
     }
@@ -639,16 +687,14 @@ namespace {
         return sexprs();
     }
 
-    sexpr eqfn(const any& arghack) {
-        const auto& args = any_cast<const sexprs&>(arghack);
-        if (get<atom>(args[0]) == get<atom>(args[1]))
+    sexpr eqfn(const sexpr& a0, const sexpr& a1) {
+        if (get<atom>(a0) == get<atom>(a1))
             return atom(symbol("true"));
         return sexprs();
     }
 
-    sexpr neqfn(const any& arghack) {
-        const auto& args = any_cast<const sexprs&>(arghack);
-        if (get<atom>(args[0]) == get<atom>(args[1]))
+    sexpr neqfn(const sexpr& a0, const sexpr& a1) {
+        if (get<atom>(a0) == get<atom>(a1))
             return sexprs();
         return atom(symbol("true"));
     }
@@ -665,20 +711,27 @@ namespace {
         return *args.begin();
     }
 
-    sexpr loadfn(const any& arghack) {
-        const auto& args = any_cast<const sexprs&>(arghack);
-        if (args.size() != 1)
-            throw std::runtime_error("incorrect # of arguments to load");
-
-        std::string fname = get<std::string>(get<atom>(args.front()));
+    sexpr loadfn(const sexpr& arg) {
+        std::string fname = get<std::string>(get<atom>(arg));
 
         std::ifstream f(fname.c_str());
-        repl(f, false, false);
+        if (!f.is_open())
+            throw std::runtime_error("file not found");
 
+        repl(f, false, false);
         return sexprs();
     }
 
+    sexpr cosfn(const sexpr& v) { return atom(cos(get<double>(get<atom>(v)))); }
+    sexpr sinfn(const sexpr& v) { return atom(sin(get<double>(get<atom>(v)))); }
+    sexpr tanfn(const sexpr& v) { return atom(tan(get<double>(get<atom>(v)))); }
+    sexpr acosfn(const sexpr& v) { return atom(acos(get<double>(get<atom>(v)))); }
+    sexpr asinfn(const sexpr& v) { return atom(asin(get<double>(get<atom>(v)))); }
+    sexpr atanfn(const sexpr& v) { return atom(atan(get<double>(get<atom>(v)))); }
+
 }
+
+
 
 void repl(std::istream& in, bool prompt, bool out) {
     const int SZ = 1024;
@@ -724,9 +777,9 @@ int main(int argc, char* argv[]) {
         .add(">", lambda(gtfn))
         .add("<=", lambda(lteqfn))
         .add(">=", lambda(gteqfn))
-        .add("==", lambda(eqfn))
-        .add("!=", lambda(neqfn))
-        .add("len", lambda(lenfn))
+        .add("==", make_lambda(eqfn))
+        .add("!=", make_lambda(neqfn))
+        .add("len", make_lambda(lenfn))
         .add("cons", lambda(consfn))
         .add("car", lambda(carfn))
         .add("cdr", lambda(cdrfn))
@@ -738,7 +791,13 @@ int main(int argc, char* argv[]) {
         .add("defvar", lambda(defvarfn))
         .add("global-env", lambda(envfn))
         .add("pr", lambda(prfn))
-        .add("load", lambda(loadfn))
+        .add("load", make_lambda(loadfn))
+        .add("sin", make_lambda(sinfn))
+        .add("cos", make_lambda(cosfn))
+        .add("tan", make_lambda(tanfn))
+        .add("acos", make_lambda(acosfn))
+        .add("asin", make_lambda(asinfn))
+        .add("atan", make_lambda(atanfn))
         ;
     repl(std::cin, true, true);
 }
