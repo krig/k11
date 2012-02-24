@@ -34,12 +34,14 @@ public:
     }
 };
 
+class context;
+
 typedef boost::variant<double, std::string, symbol> atom;
 typedef boost::make_recursive_variant<atom,
                                       std::vector<boost::recursive_variant_>,
-                                      boost::function1<boost::recursive_variant_, const void*>>::type sexpr;
+                                      boost::function2<boost::recursive_variant_, const void*, context*>>::type sexpr;
 typedef std::vector<sexpr> sexprs;
-typedef boost::function1<sexpr, const void*> lambda;
+typedef boost::function2<sexpr, const void*, context*> lambda;
 
 template <typename Atom>
 void vec_arg(sexprs& v, const Atom& a) {
@@ -115,7 +117,7 @@ public:
     }
 
     std::string operator()(const lambda& fn) const {
-        return "(lambda-function)";
+        return "<fn>";
     }
 
     std::string operator()(const sexprs& v) const {
@@ -336,12 +338,18 @@ bool truth(const sexpr& x) {
     return !(v && v->size() == 0);
 }
 
+class context {
+public:
+    explicit context(environment* env_) : env(env_) {}
+    environment* env;
+};
+
 sexpr eval(sexpr x, const envptr& env);
 
 struct lambda_impl {
     lambda_impl(const sexprs& vars, const sexpr& exp, const envptr& parent) : _vars(vars), _exp(exp), _parent(parent) {
     }
-    sexpr operator()(const void* arghack) {
+    sexpr operator()(const void* arghack, context*) {
         const sexprs& args = *(const sexprs*)(arghack);
         envptr env(new environment(_vars, args, _parent));
         return eval(_exp, env);
@@ -358,7 +366,7 @@ template <typename Fn>
 struct lambda_impl_2<0, Fn> {
     lambda_impl_2(const Fn& fn) : _fn(fn) {
     }
-    sexpr operator()(const void* arghack) {
+    sexpr operator()(const void* arghack, context*) {
         const sexprs& args = *(const sexprs*)(arghack);
         if (args.size() != 0) throw std::runtime_error("bad arity");
         return _fn();
@@ -370,7 +378,7 @@ template <typename Fn>
 struct lambda_impl_2<1, Fn> {
     lambda_impl_2(const Fn& fn) : _fn(fn) {
     }
-    sexpr operator()(const void* arghack) {
+    sexpr operator()(const void* arghack, context*) {
         const sexprs& args = *(const sexprs*)(arghack);
         if (args.size() != 1) throw std::runtime_error("bad arity");
         return _fn(args[0]);
@@ -382,7 +390,7 @@ template <typename Fn>
 struct lambda_impl_2<2, Fn> {
     lambda_impl_2(const Fn& fn) : _fn(fn) {
     }
-    sexpr operator()(const void* arghack) {
+    sexpr operator()(const void* arghack, context*) {
         const sexprs& args = *(const sexprs*)(arghack);
         if (args.size() != 2) throw std::runtime_error("bad arity");
         return _fn(args[0], args[1]);
@@ -390,12 +398,25 @@ struct lambda_impl_2<2, Fn> {
     boost::function<Fn> _fn;
 };
 
+template <int, typename Fn>
+struct lambda_impl_va;
+
 template <typename Fn>
-struct lambda_impl_va {
+struct lambda_impl_va<1, Fn> {
     lambda_impl_va(const Fn& fn) : _fn(fn) {
     }
-    sexpr operator()(const void* arghack) {
+    sexpr operator()(const void* arghack, context*) {
         return _fn(*(const sexprs*)(arghack));
+    }
+    boost::function<Fn> _fn;
+};
+
+template <typename Fn>
+struct lambda_impl_va<2, Fn> {
+    lambda_impl_va(const Fn& fn) : _fn(fn) {
+    }
+    sexpr operator()(const void* arghack, context* ctx) {
+        return _fn(*(const sexprs*)(arghack), ctx);
     }
     boost::function<Fn> _fn;
 };
@@ -411,7 +432,7 @@ sexpr make_lambda(const Fn& fn) {
 
 template <typename Fn>
 sexpr make_lambda_va(const Fn& fn) {
-    return lambda(lambda_impl_va<Fn>(fn));
+    return lambda(lambda_impl_va<boost::function_traits<Fn>::arity, Fn>(fn));
 }
 
 sexpr eval(sexpr x, const envptr& env) {
@@ -490,13 +511,14 @@ sexpr eval(sexpr x, const envptr& env) {
                     return sexprs();
             }
             else {
+                const size_t vsz = v->size();
                 lambda proc = boost::get<lambda>(eval((*v)[0], env));
                 sexprs exps;
-                exps.reserve(v->size());
-                for (size_t i = 1; i < v->size(); ++i) {
+                exps.reserve(vsz);
+                for (size_t i = 1; i < vsz; ++i)
                     exps.push_back(eval((*v)[i], env));
-                }
-                return proc(&exps);
+                context ctx(env.get());
+                return proc(&exps, &ctx);
             }
         }
     }
@@ -662,11 +684,17 @@ namespace {
     }
 
     sexpr envfn() {
-        int w = 4;
         auto i = global_env->_env.begin(), e = global_env->_env.end();
         for (; i != e; ++i) {
-            std::cout << i->first << ((--w == 0) ? "\n" : "\t");
-            if (w == 0) w = 4;
+            std::cout << i->first << "\t=\t" << to_str(i->second) << "\n";
+        }
+        return global_env->_false;
+    }
+
+    sexpr localsfn(const sexprs&, context* ctx) {
+        environment* env = ctx->env;
+        for (auto i = env->_env.begin(), e = env->_env.end(); i != e; ++i) {
+            std::cout << i->first << "\t=\t" << to_str(i->second) << "\n";
         }
         return global_env->_false;
     }
@@ -792,7 +820,8 @@ int main(int argc, char* argv[]) {
         .add("null?", make_lambda(nullpfn))
         .add("symbol?", make_lambda(symbolpfn))
         .add("defvar", make_lambda(defvarfn))
-        .add("global-env", make_lambda(envfn))
+        .add("print-globals", make_lambda(envfn))
+        .add("print-locals", make_lambda_va(localsfn))
         .add("pr", make_lambda_va(prfn))
         .add("load", make_lambda(loadfn))
         .add("sin", make_lambda(sinfn))
