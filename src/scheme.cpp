@@ -11,7 +11,6 @@
 #include <boost/lexical_cast.hpp>
 #include <boost/function.hpp>
 #include <boost/shared_ptr.hpp>
-#include <boost/any.hpp>
 #include <boost/type_traits.hpp>
 #include <boost/unordered_map.hpp>
 #include <vector>
@@ -38,9 +37,9 @@ public:
 typedef boost::variant<double, std::string, symbol> atom;
 typedef boost::make_recursive_variant<atom,
                                       std::vector<boost::recursive_variant_>,
-                                      boost::function1<boost::recursive_variant_, const boost::any&>>::type sexpr;
+                                      boost::function1<boost::recursive_variant_, const void*>>::type sexpr;
 typedef std::vector<sexpr> sexprs;
-typedef boost::function1<sexpr, const boost::any&> lambda;
+typedef boost::function1<sexpr, const void*> lambda;
 
 void vec_arg(sexprs& v, int a) {
     v.push_back(atom((double)a));
@@ -328,13 +327,13 @@ bool truth(const sexpr& x) {
     return !(v && v->size() == 0);
 }
 
-sexpr eval(const sexpr& x, const envptr& env);
+sexpr eval(sexpr x, const envptr& env);
 
 struct lambda_impl {
     lambda_impl(const sexprs& vars, const sexpr& exp, const envptr& parent) : _vars(vars), _exp(exp), _parent(parent) {
     }
-    sexpr operator()(const boost::any& arghack) {
-        const sexprs& args = boost::any_cast<const sexprs&>(arghack);
+    sexpr operator()(const void* arghack) {
+        const sexprs& args = *(const sexprs*)(arghack);
         envptr env(new environment(_vars, args, _parent));
         return eval(_exp, env);
     }
@@ -350,8 +349,8 @@ template <typename Fn>
 struct lambda_impl_2<0, Fn> {
     lambda_impl_2(const Fn& fn) : _fn(fn) {
     }
-    sexpr operator()(const boost::any& arghack) {
-        const sexprs& args = boost::any_cast<const sexprs&>(arghack);
+    sexpr operator()(const void* arghack) {
+        const sexprs& args = *(const sexprs*)(arghack);
         if (args.size() != 0) throw std::runtime_error("bad arity");
         return _fn();
     }
@@ -362,8 +361,8 @@ template <typename Fn>
 struct lambda_impl_2<1, Fn> {
     lambda_impl_2(const Fn& fn) : _fn(fn) {
     }
-    sexpr operator()(const boost::any& arghack) {
-        const sexprs& args = boost::any_cast<const sexprs&>(arghack);
+    sexpr operator()(const void* arghack) {
+        const sexprs& args = *(const sexprs*)(arghack);
         if (args.size() != 1) throw std::runtime_error("bad arity");
         return _fn(args[0]);
     }
@@ -374,8 +373,8 @@ template <typename Fn>
 struct lambda_impl_2<2, Fn> {
     lambda_impl_2(const Fn& fn) : _fn(fn) {
     }
-    sexpr operator()(const boost::any& arghack) {
-        const sexprs& args = boost::any_cast<const sexprs&>(arghack);
+    sexpr operator()(const void* arghack) {
+        const sexprs& args = *(const sexprs*)(arghack);
         if (args.size() != 2) throw std::runtime_error("bad arity");
         return _fn(args[0], args[1]);
     }
@@ -391,88 +390,91 @@ sexpr make_lambda(const Fn& fn) {
     return lambda(lambda_impl_2<boost::function_traits<Fn>::arity, Fn>(fn));
 }
 
-sexpr eval(const sexpr& x, const envptr& env) {
-    if (auto a = boost::get<atom>(&x)) {
-        if (auto s = boost::get<symbol>(a)) {
-            return env->find(*s)[*s];
+sexpr eval(sexpr x, const envptr& env) {
+    while (true) {
+        if (auto a = boost::get<atom>(&x)) {
+            if (auto s = boost::get<symbol>(a)) {
+                return env->find(*s)[*s];
+            }
+            return *a;
         }
-    }
-    else if (auto v = boost::get<sexprs>(&x)) {
-        if (v->size() == 0) {
-            return x;
-        }
-        else if (is_call_to(*v, "quote")) {
-            if (v->size() != 2)
-                throw std::runtime_error("incorrect arguments to quote");
-            return (*v)[1];
-        }
-        else if (is_call_to(*v, "if")) {
-            if (v->size() == 3) {
-                auto& test = (*v)[1];
-                auto& conseq = (*v)[2];
-                if (truth(eval(test, env))) {
-                    return eval(conseq, env);
+        else if (auto v = boost::get<sexprs>(&x)) {
+            if (v->size() == 0) {
+                return x;
+            }
+            else if (is_call_to(*v, "quote")) {
+                if (v->size() != 2)
+                    throw std::runtime_error("incorrect arguments to quote");
+                return (*v)[1];
+            }
+            else if (is_call_to(*v, "if")) {
+                if (v->size() == 3) {
+                    auto& test = (*v)[1];
+                    auto& conseq = (*v)[2];
+                    if (truth(eval(test, env))) {
+                        x = conseq;
+                    }
+                    else {
+                        return sexpr(sexprs());
+                    }
+                }
+                else if (v->size() == 4) {
+                    auto& test = (*v)[1];
+                    auto& conseq = (*v)[2];
+                    auto& alt = (*v)[3];
+                    if (truth(eval(test, env))) {
+                        x = conseq;
+                    }
+                    else {
+                        x = alt;
+                    }
                 }
                 else {
-                    return sexpr(sexprs());
+                    throw std::runtime_error("incorrect arguments to if");
                 }
             }
-            else if (v->size() == 4) {
-                auto& test = (*v)[1];
-                auto& conseq = (*v)[2];
-                auto& alt = (*v)[3];
-                if (truth(eval(test, env))) {
-                    return eval(conseq, env);
+            else if (is_call_to(*v, "set!")) {
+                if (v->size() != 3)
+                    throw std::runtime_error("incorrect arguments to set!");
+                auto& var = (*v)[1];
+                auto& exp = (*v)[2];
+                env->find(var)[var] = eval(exp, env);
+                return var;
+            }
+            else if (is_call_to(*v, "def")) {
+                if (v->size() != 3)
+                    throw std::runtime_error("incorrect arguments to def");
+                auto& var = (*v)[1];
+                auto& exp = (*v)[2];
+                (*env)[var] = eval(exp, env);
+                return var;
+            }
+            else if (is_call_to(*v, "fn")) {
+                if (v->size() != 3)
+                    throw std::runtime_error("incorrect arguments to fn");
+                auto& vars = boost::get<sexprs>((*v)[1]);
+                auto& exp = (*v)[2];
+                return make_lambda(vars, exp, env);
+            }
+            else if (is_call_to(*v, "do")) {
+                for (size_t i = 1; i < v->size()-1; ++i) {
+                    eval((*v)[i] , env);
                 }
-                else {
-                    return eval(alt, env);
-                }
+                if (v->size() > 1)
+                    x = v->back();
+                else
+                    return sexprs();
             }
             else {
-                throw std::runtime_error("incorrect arguments to if");
+                lambda proc = boost::get<lambda>(eval((*v)[0], env));
+                sexprs exps;
+                for (size_t i = 1; i < v->size(); ++i) {
+                    exps.push_back(eval((*v)[i], env));
+                }
+                return proc(&exps);
             }
-        }
-        else if (is_call_to(*v, "set!")) {
-            if (v->size() != 3)
-                throw std::runtime_error("incorrect arguments to set!");
-            auto& var = (*v)[1];
-            auto& exp = (*v)[2];
-            env->find(var)[var] = eval(exp, env);
-            return var;
-        }
-        else if (is_call_to(*v, "def")) {
-            if (v->size() != 3)
-                throw std::runtime_error("incorrect arguments to def");
-            auto& var = (*v)[1];
-            auto& exp = (*v)[2];
-            (*env)[var] = eval(exp, env);
-            return var;
-        }
-        else if (is_call_to(*v, "fn")) {
-            if (v->size() != 3)
-                throw std::runtime_error("incorrect arguments to fn");
-            auto& vars = boost::get<sexprs>((*v)[1]);
-            auto& exp = (*v)[2];
-            return make_lambda(vars, exp, env);
-        }
-        else if (is_call_to(*v, "do")) {
-            for (size_t i = 1; i < v->size()-1; ++i) {
-                eval((*v)[i] , env);
-            }
-            if (v->size() > 1)
-                return eval(v->back(), env);
-            return sexprs();
-        }
-        else {
-            lambda proc = boost::get<lambda>(eval((*v)[0], env));
-            sexprs exps;
-            for (size_t i = 1; i < v->size(); ++i) {
-                exps.push_back(eval((*v)[i], env));
-            }
-            return proc(boost::any(exps));
         }
     }
-    return x;
 }
 
 class pratom2s : public boost::static_visitor<std::string>
@@ -534,16 +536,16 @@ namespace {
 
     envptr global_env;
 
-    sexpr addfn(const any& arghack) {
-        const sexprs& args = any_cast<const sexprs&>(arghack);
+    sexpr addfn(const void* arghack) {
+        const sexprs& args = *(const sexprs*)(arghack);
         double sum = 0.0;
         for (auto i = args.begin(); i != args.end(); ++i)
             sum += get<double>(get<atom>(*i));
         return atom(sum);
     }
 
-    sexpr subfn(const any& arghack) {
-        const sexprs& args = any_cast<const sexprs&>(arghack);
+    sexpr subfn(const void* arghack) {
+        const sexprs& args = *(const sexprs*)(arghack);
         if (args.size() == 1) {
             return atom(-get<double>(get<atom>(args.front())));
         }
@@ -556,8 +558,8 @@ namespace {
         }
     }
 
-    sexpr mulfn(const any& arghack) {
-        const sexprs& args = any_cast<const sexprs&>(arghack);
+    sexpr mulfn(const void* arghack) {
+        const sexprs& args = *(const sexprs*)(arghack);
         auto i = args.begin();
         double sum = get<double>(get<atom>(*i++));
         for (; i != args.end(); ++i)
@@ -565,8 +567,8 @@ namespace {
         return atom(sum);
     }
 
-    sexpr divfn(const any& arghack) {
-        const sexprs& args = any_cast<const sexprs&>(arghack);
+    sexpr divfn(const void* arghack) {
+        const sexprs& args = *(const sexprs*)(arghack);
         auto i = args.begin();
         double sum = get<double>(get<atom>(*i++));
         for (; i != args.end(); ++i)
@@ -574,31 +576,31 @@ namespace {
         return atom(sum);
     }
 
-    sexpr notfn(const any& arghack) {
-        if (truth(any_cast<const sexprs&>(arghack).front()))
+    sexpr notfn(const sexpr& arg) {
+        if (truth(arg))
             return sexprs();
         return atom(symbol("true"));
     }
 
-    sexpr listfn(const any& arghack) {
-        return any_cast<const sexprs&>(arghack);
+    sexpr listfn(const void* arghack) {
+        return *(const sexprs*)(arghack);
     }
 
     sexpr lenfn(const sexpr& lst) {
         return atom((double)get<sexprs>(lst).size());
     }
 
-    sexpr carfn(const any& arghack) {
-        return get<sexprs>(any_cast<const sexprs&>(arghack).front()).front();
+    sexpr carfn(const sexpr& arg) {
+        return get<sexprs>(arg).front();
     }
 
-    sexpr cdrfn(const any& arghack) {
-        const auto& lst = get<sexprs>(any_cast<const sexprs&>(arghack).front());
+    sexpr cdrfn(const sexpr& arg) {
+        const auto& lst = get<sexprs>(arg);
         return sexprs(++lst.begin(), lst.end());
     }
 
-    sexpr consfn(const any& arghack) {
-        const auto& args = any_cast<const sexprs&>(arghack);
+    sexpr consfn(const void* arghack) {
+        const sexprs& args = *(const sexprs*)(arghack);
         auto i = args.begin();
         const auto& consing = *i++;
         const auto& lst = get<sexprs>(*i);
@@ -609,8 +611,8 @@ namespace {
         return ret;
     }
 
-    sexpr appendfn(const any& arghack) {
-        const auto& args = any_cast<const sexprs&>(arghack);
+    sexpr appendfn(const void* arghack) {
+        const sexprs& args = *(const sexprs*)(arghack);
         auto i = args.begin();
         const auto& lst = get<sexprs>(*i++);
         sexprs ret(lst);
@@ -619,35 +621,30 @@ namespace {
         return ret;
     }
 
-    sexpr listpfn(const any& arghack) {
-        auto lst = get<sexprs>(&any_cast<const sexprs&>(arghack).front());
+    sexpr listpfn(const sexpr& arg) {
+        auto lst = get<sexprs>(&arg);
         return lst ? *lst : sexprs();
     }
-    sexpr nullpfn(const any& arghack) {
-        auto lst = get<sexprs>(&any_cast<const sexprs&>(arghack).front());
+    sexpr nullpfn(const sexpr& arg) {
+        auto lst = get<sexprs>(&arg);
         if (lst && lst->size() == 0) {
             return atom(symbol("true"));
         }
         return sexprs();
     }
-    sexpr symbolpfn(const any& arghack) {
-        auto a = get<atom>(&any_cast<const sexprs&>(arghack).front());
+    sexpr symbolpfn(const sexpr& arg) {
+        auto a = get<atom>(&arg);
         if (a && get<symbol>(a))
             return *a;
         return sexprs();
     }
 
-    sexpr defvarfn(const any& arghack) {
-        const auto& args = any_cast<const sexprs&>(arghack);
-        if (args.size() != 2)
-            throw std::runtime_error("incorrect arguments to defvar");
-        auto& var = args[0];
-        auto& exp = args[1];
+    sexpr defvarfn(const sexpr& var, const sexpr& exp) {
         (*global_env)[var] = eval(exp, global_env);
         return var;
     }
 
-    sexpr envfn(const any& arghack) {
+    sexpr envfn() {
         int w = 4;
         auto i = global_env->_env.begin(), e = global_env->_env.end();
         for (; i != e; ++i) {
@@ -659,30 +656,26 @@ namespace {
 
     // TODO: generalize for non-numeric types
 
-    sexpr ltfn(const any& arghack) {
-        const auto& args = any_cast<const sexprs&>(arghack);
-        if (get<double>(get<atom>(args[0])) < get<double>(get<atom>(args[1])))
+    sexpr ltfn(const sexpr& a, const sexpr& b) {
+        if (get<double>(get<atom>(a)) < get<double>(get<atom>(b)))
             return atom(symbol("true"));
         return sexprs();
     }
 
-    sexpr gtfn(const any& arghack) {
-        const auto& args = any_cast<const sexprs&>(arghack);
-        if (get<double>(get<atom>(args[0])) > get<double>(get<atom>(args[1])))
+    sexpr gtfn(const sexpr& a, const sexpr& b) {
+        if (get<double>(get<atom>(a)) > get<double>(get<atom>(b)))
             return atom(symbol("true"));
         return sexprs();
     }
 
-    sexpr lteqfn(const any& arghack) {
-        const auto& args = any_cast<const sexprs&>(arghack);
-        if (get<double>(get<atom>(args[0])) <= get<double>(get<atom>(args[1])))
+    sexpr lteqfn(const sexpr& a, const sexpr& b) {
+        if (get<double>(get<atom>(a)) <= get<double>(get<atom>(b)))
             return atom(symbol("true"));
         return sexprs();
     }
 
-    sexpr gteqfn(const any& arghack) {
-        const auto& args = any_cast<const sexprs&>(arghack);
-        if (get<double>(get<atom>(args[0])) >= get<double>(get<atom>(args[1])))
+    sexpr gteqfn(const sexpr& a, const sexpr& b) {
+        if (get<double>(get<atom>(a)) >= get<double>(get<atom>(b)))
             return atom(symbol("true"));
         return sexprs();
     }
@@ -699,15 +692,12 @@ namespace {
         return atom(symbol("true"));
     }
 
-    sexpr prfn(const any& arghack) {
-        const auto& args = any_cast<const sexprs&>(arghack);
+    sexpr prfn(const void* arghack) {
+        const sexprs& args = *(const sexprs*)(arghack);
         if (args.size() == 0)
             return args;
-        auto i = args.begin();
-        std::cout << pr_to_str(*i++);
-        for (; i != args.end(); ++i) {
+        for (auto i = args.begin(); i != args.end(); ++i)
             std::cout << pr_to_str(*i);
-        }
         return *args.begin();
     }
 
@@ -772,24 +762,24 @@ int main(int argc, char* argv[]) {
         .add("-", lambda(subfn))
         .add("*", lambda(mulfn))
         .add("/", lambda(divfn))
-        .add("not", lambda(notfn))
-        .add("<", lambda(ltfn))
-        .add(">", lambda(gtfn))
-        .add("<=", lambda(lteqfn))
-        .add(">=", lambda(gteqfn))
+        .add("not", make_lambda(notfn))
+        .add("<", make_lambda(ltfn))
+        .add(">", make_lambda(gtfn))
+        .add("<=", make_lambda(lteqfn))
+        .add(">=", make_lambda(gteqfn))
         .add("==", make_lambda(eqfn))
         .add("!=", make_lambda(neqfn))
         .add("len", make_lambda(lenfn))
         .add("cons", lambda(consfn))
-        .add("car", lambda(carfn))
-        .add("cdr", lambda(cdrfn))
+        .add("car", make_lambda(carfn))
+        .add("cdr", make_lambda(cdrfn))
         .add("append", lambda(appendfn))
         .add("list", lambda(listfn))
-        .add("list?", lambda(listpfn))
-        .add("null?", lambda(nullpfn))
-        .add("symbol?", lambda(symbolpfn))
-        .add("defvar", lambda(defvarfn))
-        .add("global-env", lambda(envfn))
+        .add("list?", make_lambda(listpfn))
+        .add("null?", make_lambda(nullpfn))
+        .add("symbol?", make_lambda(symbolpfn))
+        .add("defvar", make_lambda(defvarfn))
+        .add("global-env", make_lambda(envfn))
         .add("pr", lambda(prfn))
         .add("load", make_lambda(loadfn))
         .add("sin", make_lambda(sinfn))
