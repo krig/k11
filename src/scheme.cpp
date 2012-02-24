@@ -41,20 +41,13 @@ typedef boost::make_recursive_variant<atom,
 typedef std::vector<sexpr> sexprs;
 typedef boost::function1<sexpr, const void*> lambda;
 
+template <typename Atom>
+void vec_arg(sexprs& v, const Atom& a) {
+    v.push_back(atom(a));
+}
+
 void vec_arg(sexprs& v, int a) {
     v.push_back(atom((double)a));
-}
-
-void vec_arg(sexprs& v, double a) {
-    v.push_back(atom(a));
-}
-
-void vec_arg(sexprs& v, const symbol& a) {
-    v.push_back(atom(a));
-}
-
-void vec_arg(sexprs& v, const std::string& a) {
-    v.push_back(atom(a));
 }
 
 void vec_arg(sexprs& v, const sexpr& l) {
@@ -204,7 +197,9 @@ sexpr parse_atom(const char* b, const char* e) {
     }
 }
 
-sexpr readref(streamptr& s) {
+sexpr read2(streamptr& s) {
+    streamptr sp(s);
+
     // skip comment
     if (s.peek() == ';') {
         while (s.next() != '\n' && !s.eof())
@@ -221,7 +216,7 @@ sexpr readref(streamptr& s) {
         sexprs v;
         s.next();
         while (s.peek() != ')')
-            v.push_back(readref(s));
+            v.push_back(read2(s));
         s.next();
         return v;
     }
@@ -230,17 +225,17 @@ sexpr readref(streamptr& s) {
     }
     else if (s.peek() == '\'') {
         s.next();
-        return list(atom(symbol("quote")), readref(s));
+        return list(atom(symbol("quote")), read2(s));
     }
     else if (s.peek() == '`') {
         s.next();
-        return list(atom(symbol("quasiquote")), readref(s));
+        return list(atom(symbol("quasiquote")), read2(s));
     }
     else if (s.peek() == ',') {
         s.next();
         if (s.peek() == '@')
-            return list(atom(symbol("unquote-splicing")), readref(s));
-        return list(atom(symbol("unquote")), readref(s));
+            return list(atom(symbol("unquote-splicing")), read2(s));
+        return list(atom(symbol("unquote")), read2(s));
     }
     else if (s.peek() == '"') {
         const char* b = s._s+1;
@@ -262,15 +257,26 @@ sexpr readref(streamptr& s) {
 
 sexpr read(const char* s) {
     streamptr sp(s);
-    return readref(sp);
+    return read2(sp);
 }
 
 class environment {
 public:
-    environment() {
+    environment()
+        : _parent(),
+          _env(),
+          _true(symbol("true")),
+          _false() {
+        _env["true"] = _true;
+        _env["false"] = _false;
+        _env["nil"] = _false;
     }
 
-    environment(const sexprs& vars, const sexprs& args, const boost::shared_ptr<environment> parent) {
+    environment(const sexprs& vars, const sexprs& args, const boost::shared_ptr<environment> parent)
+        : _parent(parent),
+          _env(),
+          _true(symbol("true")),
+          _false() {
         _parent = parent;
         if (vars.size() != args.size())
             throw std::runtime_error("argument arity mismatch");
@@ -307,6 +313,9 @@ public:
 
     boost::shared_ptr<environment> _parent;
     boost::unordered_map<std::string, sexpr> _env;
+
+    atom _true;
+    sexprs _false;
 };
 
 typedef boost::shared_ptr<environment> envptr;
@@ -381,6 +390,16 @@ struct lambda_impl_2<2, Fn> {
     boost::function<Fn> _fn;
 };
 
+template <typename Fn>
+struct lambda_impl_va {
+    lambda_impl_va(const Fn& fn) : _fn(fn) {
+    }
+    sexpr operator()(const void* arghack) {
+        return _fn(*(const sexprs*)(arghack));
+    }
+    boost::function<Fn> _fn;
+};
+
 sexpr make_lambda(const sexprs& vars, const sexpr& exp, const envptr& env) {
     return lambda(lambda_impl(vars, exp, env));
 }
@@ -388,6 +407,11 @@ sexpr make_lambda(const sexprs& vars, const sexpr& exp, const envptr& env) {
 template <typename Fn>
 sexpr make_lambda(const Fn& fn) {
     return lambda(lambda_impl_2<boost::function_traits<Fn>::arity, Fn>(fn));
+}
+
+template <typename Fn>
+sexpr make_lambda_va(const Fn& fn) {
+    return lambda(lambda_impl_va<Fn>(fn));
 }
 
 sexpr eval(sexpr x, const envptr& env) {
@@ -468,6 +492,7 @@ sexpr eval(sexpr x, const envptr& env) {
             else {
                 lambda proc = boost::get<lambda>(eval((*v)[0], env));
                 sexprs exps;
+                exps.reserve(v->size());
                 for (size_t i = 1; i < v->size(); ++i) {
                     exps.push_back(eval((*v)[i], env));
                 }
@@ -536,30 +561,25 @@ namespace {
 
     envptr global_env;
 
-    sexpr addfn(const void* arghack) {
-        const sexprs& args = *(const sexprs*)(arghack);
+    sexpr addfn(const sexprs& args) {
         double sum = 0.0;
         for (auto i = args.begin(); i != args.end(); ++i)
             sum += get<double>(get<atom>(*i));
         return atom(sum);
     }
 
-    sexpr subfn(const void* arghack) {
-        const sexprs& args = *(const sexprs*)(arghack);
+    sexpr subfn(const sexprs& args) {
         if (args.size() == 1) {
             return atom(-get<double>(get<atom>(args.front())));
         }
-        else {
-            auto i = args.begin();
-            double sum = get<double>(get<atom>(*i++));
-            for (; i != args.end(); ++i)
-                sum -= get<double>(get<atom>(*i));
-            return atom(sum);
-        }
+        auto i = args.begin();
+        double sum = get<double>(get<atom>(*i++));
+        for (; i != args.end(); ++i)
+            sum -= get<double>(get<atom>(*i));
+        return atom(sum);
     }
 
-    sexpr mulfn(const void* arghack) {
-        const sexprs& args = *(const sexprs*)(arghack);
+    sexpr mulfn(const sexprs& args) {
         auto i = args.begin();
         double sum = get<double>(get<atom>(*i++));
         for (; i != args.end(); ++i)
@@ -567,8 +587,7 @@ namespace {
         return atom(sum);
     }
 
-    sexpr divfn(const void* arghack) {
-        const sexprs& args = *(const sexprs*)(arghack);
+    sexpr divfn(const sexprs& args) {
         auto i = args.begin();
         double sum = get<double>(get<atom>(*i++));
         for (; i != args.end(); ++i)
@@ -578,12 +597,12 @@ namespace {
 
     sexpr notfn(const sexpr& arg) {
         if (truth(arg))
-            return sexprs();
-        return atom(symbol("true"));
+            return global_env->_false;
+        return global_env->_true;
     }
 
-    sexpr listfn(const void* arghack) {
-        return *(const sexprs*)(arghack);
+    sexpr listfn(const sexprs& args) {
+        return args;
     }
 
     sexpr lenfn(const sexpr& lst) {
@@ -599,8 +618,7 @@ namespace {
         return sexprs(++lst.begin(), lst.end());
     }
 
-    sexpr consfn(const void* arghack) {
-        const sexprs& args = *(const sexprs*)(arghack);
+    sexpr consfn(const sexprs& args) {
         auto i = args.begin();
         const auto& consing = *i++;
         const auto& lst = get<sexprs>(*i);
@@ -611,8 +629,7 @@ namespace {
         return ret;
     }
 
-    sexpr appendfn(const void* arghack) {
-        const sexprs& args = *(const sexprs*)(arghack);
+    sexpr appendfn(const sexprs& args) {
         auto i = args.begin();
         const auto& lst = get<sexprs>(*i++);
         sexprs ret(lst);
@@ -628,15 +645,15 @@ namespace {
     sexpr nullpfn(const sexpr& arg) {
         auto lst = get<sexprs>(&arg);
         if (lst && lst->size() == 0) {
-            return atom(symbol("true"));
+            return global_env->_true;
         }
-        return sexprs();
+        return global_env->_false;
     }
     sexpr symbolpfn(const sexpr& arg) {
         auto a = get<atom>(&arg);
         if (a && get<symbol>(a))
             return *a;
-        return sexprs();
+        return global_env->_false;
     }
 
     sexpr defvarfn(const sexpr& var, const sexpr& exp) {
@@ -651,49 +668,48 @@ namespace {
             std::cout << i->first << ((--w == 0) ? "\n" : "\t");
             if (w == 0) w = 4;
         }
-        return sexprs();
+        return global_env->_false;
     }
 
     // TODO: generalize for non-numeric types
 
     sexpr ltfn(const sexpr& a, const sexpr& b) {
         if (get<double>(get<atom>(a)) < get<double>(get<atom>(b)))
-            return atom(symbol("true"));
-        return sexprs();
+            return global_env->_true;
+        return global_env->_false;
     }
 
     sexpr gtfn(const sexpr& a, const sexpr& b) {
         if (get<double>(get<atom>(a)) > get<double>(get<atom>(b)))
-            return atom(symbol("true"));
-        return sexprs();
+            return global_env->_true;
+        return global_env->_false;
     }
 
     sexpr lteqfn(const sexpr& a, const sexpr& b) {
         if (get<double>(get<atom>(a)) <= get<double>(get<atom>(b)))
-            return atom(symbol("true"));
-        return sexprs();
+            return global_env->_true;
+        return global_env->_false;
     }
 
     sexpr gteqfn(const sexpr& a, const sexpr& b) {
         if (get<double>(get<atom>(a)) >= get<double>(get<atom>(b)))
-            return atom(symbol("true"));
-        return sexprs();
+            return global_env->_true;
+        return global_env->_false;
     }
 
     sexpr eqfn(const sexpr& a0, const sexpr& a1) {
         if (get<atom>(a0) == get<atom>(a1))
-            return atom(symbol("true"));
-        return sexprs();
+            return global_env->_true;
+        return global_env->_false;
     }
 
     sexpr neqfn(const sexpr& a0, const sexpr& a1) {
         if (get<atom>(a0) == get<atom>(a1))
-            return sexprs();
-        return atom(symbol("true"));
+            return global_env->_false;
+        return global_env->_true;
     }
 
-    sexpr prfn(const void* arghack) {
-        const sexprs& args = *(const sexprs*)(arghack);
+    sexpr prfn(const sexprs& args) {
         if (args.size() == 0)
             return args;
         for (auto i = args.begin(); i != args.end(); ++i)
@@ -709,7 +725,7 @@ namespace {
             throw std::runtime_error("file not found");
 
         repl(f, false, false);
-        return sexprs();
+        return global_env->_false;
     }
 
     sexpr cosfn(const sexpr& v) { return atom(cos(get<double>(get<atom>(v)))); }
@@ -752,16 +768,13 @@ void repl(std::istream& in, bool prompt, bool out) {
 }
 
 int main(int argc, char* argv[]) {
-    sexpr nil = sexprs();
     global_env = envptr(new environment);
 
-    global_env->add("true", atom(symbol("true")))
-        .add("false", nil)
-        .add("nil", nil)
-        .add("+", lambda(addfn))
-        .add("-", lambda(subfn))
-        .add("*", lambda(mulfn))
-        .add("/", lambda(divfn))
+    global_env->
+         add("+", make_lambda_va(addfn))
+        .add("-", make_lambda_va(subfn))
+        .add("*", make_lambda_va(mulfn))
+        .add("/", make_lambda_va(divfn))
         .add("not", make_lambda(notfn))
         .add("<", make_lambda(ltfn))
         .add(">", make_lambda(gtfn))
@@ -770,17 +783,17 @@ int main(int argc, char* argv[]) {
         .add("==", make_lambda(eqfn))
         .add("!=", make_lambda(neqfn))
         .add("len", make_lambda(lenfn))
-        .add("cons", lambda(consfn))
+        .add("cons", make_lambda_va(consfn))
         .add("car", make_lambda(carfn))
         .add("cdr", make_lambda(cdrfn))
-        .add("append", lambda(appendfn))
-        .add("list", lambda(listfn))
+        .add("append", make_lambda_va(appendfn))
+        .add("list", make_lambda_va(listfn))
         .add("list?", make_lambda(listpfn))
         .add("null?", make_lambda(nullpfn))
         .add("symbol?", make_lambda(symbolpfn))
         .add("defvar", make_lambda(defvarfn))
         .add("global-env", make_lambda(envfn))
-        .add("pr", lambda(prfn))
+        .add("pr", make_lambda_va(prfn))
         .add("load", make_lambda(loadfn))
         .add("sin", make_lambda(sinfn))
         .add("cos", make_lambda(cosfn))
