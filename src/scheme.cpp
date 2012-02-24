@@ -22,6 +22,116 @@
 #include <stdlib.h>
 #include <math.h>
 
+class token_stream {
+public:
+    enum Token {
+        Eof,
+        LParen,
+        RParen,
+        LMap,
+        RMap,
+        LVec,
+        RVec,
+        Symbol,
+        Number,
+        String,
+        Quote,
+        Quasiquote,
+        Unquote,
+        UnquoteSplicing,
+    };
+    token_stream(std::istream& src) : _src(src) {
+    }
+
+    Token next() {
+        text = "";
+
+        if (!_src.good())
+            return Eof;
+
+        // eat whitespace and comments
+        int ch = _src.get();
+        while (isspace(ch) || ch == ';') {
+            while (isspace(ch))
+                ch = _src.get();
+            if (ch == ';') {
+                while (ch != '\n' && _src.good())
+                    ch = _src.get();
+            }
+        }
+
+        if (!_src.good())
+            return Eof;
+
+        switch (ch) {
+        case '(': return LParen;
+        case ')': return RParen;
+        case '{': return LMap;
+        case '}': return RMap;
+        case '[': return LVec;
+        case ']': return RVec;
+        case '\'': text = "quote"; return Quote;
+        case '`': text = "quasiquote"; return Quasiquote;
+        case ',': {
+            if (_src.get() == '@') {
+                text = "unquote-splicing";
+                return UnquoteSplicing;
+            }
+            _src.unget();
+            text = "unquote";
+            return Unquote;
+        }
+        case '"': fill_string(); return String;
+        default: {
+            fill_text(ch);
+            const char* b = text.c_str();
+            if (((*b == '-' || *b == '.') && isdigit(*(b+1))) ||
+                     isdigit(*b)) {
+                return Number;
+            }
+            else {
+                return Symbol;
+            }
+        }
+        }
+    }
+
+    std::string text;
+
+private:
+    void fill_text(int ch) {
+        while (!isspace(ch) && ch != ')') {
+            text += (char)ch;
+            ch = _src.get();
+        }
+        _src.unget();
+    }
+
+    void fill_string() {
+        std::stringstream ss;
+        int ch = _src.get();
+        while (ch != '"') {
+            if (ch == '\\') {
+                switch (_src.get()) {
+                case '\\': ss << '\\'; break;
+                case 'n': ss << '\n'; break;
+                case 'r': ss << '\r'; break;
+                case 't': ss << '\t'; break;
+                case '"': ss << '"'; break;
+                default: throw std::runtime_error("unrecognized escape sequence in string");
+                }
+            }
+            else {
+                ss << (char)ch;
+            }
+            ch = _src.get();
+        }
+        text = ss.str();
+    }
+
+    std::istream& _src;
+};
+
 class symbol : public std::string {
 public:
     symbol() : std::string() {
@@ -34,14 +144,12 @@ public:
     }
 };
 
-class context;
-
 typedef boost::variant<double, std::string, symbol> atom;
 typedef boost::make_recursive_variant<atom,
                                       std::vector<boost::recursive_variant_>,
-                                      boost::function2<boost::recursive_variant_, const void*, context*>>::type sexpr;
+                                      boost::function1<boost::recursive_variant_, const void*>>::type sexpr;
 typedef std::vector<sexpr> sexprs;
-typedef boost::function2<sexpr, const void*, context*> lambda;
+typedef boost::function1<sexpr, const void*> lambda;
 
 template <typename Atom>
 void vec_arg(sexprs& v, const Atom& a) {
@@ -146,120 +254,46 @@ std::string to_str(const atom& a) {
     return boost::apply_visitor(atom2s(), a);
 }
 
-struct streamptr {
-    const char* _s;
-    explicit streamptr(const char* s) : _s(s) {
-    }
-    char peek() {
-        while (isspace(*_s))
-            ++_s;
-        return *_s;
-    }
-    bool eof() const {
-        return *_s == 0 || *_s == ';';
-    }
-    char next() {
-        while (isspace(*_s))
-            ++_s;
-        return *_s++;
-    }
-};
 
-sexpr unescape_string(const char* s, const char* e) {
-    std::stringstream ss;
-    while (s != e) {
-        if (*s == '\\') {
-            switch (*(++s)) {
-            case '\\': ss << '\\'; break;
-            case 'n': ss << '\n'; break;
-            case 'r': ss << '\r'; break;
-            case 't': ss << '\t'; break;
-            case '"': ss << '"'; break;
-            default: throw std::runtime_error("unrecognized escape sequence in string");
-            }
-        }
-        else {
-            ss << *s;
-        }
-        ++s;
-    }
-    return atom(ss.str());
-}
+sexpr read(token_stream& s);
 
-sexpr parse_atom(const char* b, const char* e) {
-    if (((*b == '-' || *b == '.') && isdigit(*(b+1))) ||
-        isdigit(*b)) {
-        return atom(boost::lexical_cast<double>(std::string(b, e)));
-    }
-    else if (*b == '"') {
-        return atom(std::string(b+1, e-1));
-    }
-    else {
-        return atom(symbol(b, e));
-    }
-}
-
-sexpr read2(streamptr& s) {
-    streamptr sp(s);
-
-    // skip comment
-    if (s.peek() == ';') {
-        while (s.next() != '\n' && !s.eof())
-            ;
-    }
-
-    if (s.eof()) {
+sexpr read_ahead(token_stream& s, token_stream::Token token) {
+    switch (token) {
+    case token_stream::Eof:
         return sexprs();
-    }
-    else if (s.peek() == '\n') {
-        return sexprs();
-    }
-    else if (s.peek() == '(') {
+    case token_stream::LParen: {
         sexprs v;
-        s.next();
-        while (s.peek() != ')')
-            v.push_back(read2(s));
-        s.next();
+        while (true) {
+            token = s.next();
+            if (token == token_stream::RParen)
+                return v;
+            v.push_back(read_ahead(s, token));
+        }
+    }
+    case token_stream::RParen:
+        throw std::runtime_error("unexpected )");
+    case token_stream::Quote:
+    case token_stream::Quasiquote:
+    case token_stream::Unquote:
+    case token_stream::UnquoteSplicing: {
+        sexprs v;
+        v.push_back(atom(symbol(s.text)));
+        v.push_back(read(s));
         return v;
     }
-    else if (s.peek() == ')') {
-        throw std::runtime_error("mismatched )");
-    }
-    else if (s.peek() == '\'') {
-        s.next();
-        return list(atom(symbol("quote")), read2(s));
-    }
-    else if (s.peek() == '`') {
-        s.next();
-        return list(atom(symbol("quasiquote")), read2(s));
-    }
-    else if (s.peek() == ',') {
-        s.next();
-        if (s.peek() == '@')
-            return list(atom(symbol("unquote-splicing")), read2(s));
-        return list(atom(symbol("unquote")), read2(s));
-    }
-    else if (s.peek() == '"') {
-        const char* b = s._s+1;
-        const char* e = b;
-        while (!(*(e-1) == '\\' && *e == '"') && (*e != '"'))
-            ++e;
-        s._s = e+1;
-        return unescape_string(b, e);
-    }
-    else {
-        const char* b = s._s;
-        const char* e = s._s+1;
-        while (!isspace(*e) && *e != ')' && *e != '\0')
-            ++e;
-        s._s = e;
-        return parse_atom(b, e);
+    case token_stream::Symbol:
+        return atom(symbol(s.text));
+    case token_stream::Number:
+        return atom(boost::lexical_cast<double>(s.text));
+    default:
+    case token_stream::String:
+        return atom(s.text);
     }
 }
 
-sexpr read(const char* s) {
-    streamptr sp(s);
-    return read2(sp);
+sexpr read(token_stream& s) {
+    token_stream::Token tok = s.next();
+    return read_ahead(s, tok);
 }
 
 class environment {
@@ -338,18 +372,12 @@ bool truth(const sexpr& x) {
     return !(v && v->size() == 0);
 }
 
-class context {
-public:
-    explicit context(environment* env_) : env(env_) {}
-    environment* env;
-};
-
 sexpr eval(sexpr x, const envptr& env);
 
 struct lambda_impl {
     lambda_impl(const sexprs& vars, const sexpr& exp, const envptr& parent) : _vars(vars), _exp(exp), _parent(parent) {
     }
-    sexpr operator()(const void* arghack, context*) {
+    sexpr operator()(const void* arghack) {
         const sexprs& args = *(const sexprs*)(arghack);
         envptr env(new environment(_vars, args, _parent));
         return eval(_exp, env);
@@ -366,7 +394,7 @@ template <typename Fn>
 struct lambda_impl_2<0, Fn> {
     lambda_impl_2(const Fn& fn) : _fn(fn) {
     }
-    sexpr operator()(const void* arghack, context*) {
+    sexpr operator()(const void* arghack) {
         const sexprs& args = *(const sexprs*)(arghack);
         if (args.size() != 0) throw std::runtime_error("bad arity");
         return _fn();
@@ -378,7 +406,7 @@ template <typename Fn>
 struct lambda_impl_2<1, Fn> {
     lambda_impl_2(const Fn& fn) : _fn(fn) {
     }
-    sexpr operator()(const void* arghack, context*) {
+    sexpr operator()(const void* arghack) {
         const sexprs& args = *(const sexprs*)(arghack);
         if (args.size() != 1) throw std::runtime_error("bad arity");
         return _fn(args[0]);
@@ -390,7 +418,7 @@ template <typename Fn>
 struct lambda_impl_2<2, Fn> {
     lambda_impl_2(const Fn& fn) : _fn(fn) {
     }
-    sexpr operator()(const void* arghack, context*) {
+    sexpr operator()(const void* arghack) {
         const sexprs& args = *(const sexprs*)(arghack);
         if (args.size() != 2) throw std::runtime_error("bad arity");
         return _fn(args[0], args[1]);
@@ -398,25 +426,12 @@ struct lambda_impl_2<2, Fn> {
     boost::function<Fn> _fn;
 };
 
-template <int, typename Fn>
-struct lambda_impl_va;
-
 template <typename Fn>
-struct lambda_impl_va<1, Fn> {
+struct lambda_impl_va {
     lambda_impl_va(const Fn& fn) : _fn(fn) {
     }
-    sexpr operator()(const void* arghack, context*) {
+    sexpr operator()(const void* arghack) {
         return _fn(*(const sexprs*)(arghack));
-    }
-    boost::function<Fn> _fn;
-};
-
-template <typename Fn>
-struct lambda_impl_va<2, Fn> {
-    lambda_impl_va(const Fn& fn) : _fn(fn) {
-    }
-    sexpr operator()(const void* arghack, context* ctx) {
-        return _fn(*(const sexprs*)(arghack), ctx);
     }
     boost::function<Fn> _fn;
 };
@@ -432,7 +447,7 @@ sexpr make_lambda(const Fn& fn) {
 
 template <typename Fn>
 sexpr make_lambda_va(const Fn& fn) {
-    return lambda(lambda_impl_va<boost::function_traits<Fn>::arity, Fn>(fn));
+    return lambda(lambda_impl_va<Fn>(fn));
 }
 
 sexpr eval(sexpr x, const envptr& env) {
@@ -517,8 +532,7 @@ sexpr eval(sexpr x, const envptr& env) {
                 exps.reserve(vsz);
                 for (size_t i = 1; i < vsz; ++i)
                     exps.push_back(eval((*v)[i], env));
-                context ctx(env.get());
-                return proc(&exps, &ctx);
+                return proc(&exps);
             }
         }
     }
@@ -691,14 +705,6 @@ namespace {
         return global_env->_false;
     }
 
-    sexpr localsfn(const sexprs&, context* ctx) {
-        environment* env = ctx->env;
-        for (auto i = env->_env.begin(), e = env->_env.end(); i != e; ++i) {
-            std::cout << i->first << "\t=\t" << to_str(i->second) << "\n";
-        }
-        return global_env->_false;
-    }
-
     // TODO: generalize for non-numeric types
 
     sexpr ltfn(const sexpr& a, const sexpr& b) {
@@ -768,20 +774,14 @@ namespace {
 
 
 void repl(std::istream& in, bool prompt, bool out) {
-    const int SZ = 1024;
-    char tmp[SZ];
+    token_stream tokens(in);
     while (true) {
-        if (prompt)
-            std::cout << ">>> " << std::flush;
-        in.getline(tmp, SZ);
         if (in.eof())
             break;
-        if (tmp[0] == '\0')
-            continue;
-        if (strcmp(tmp, "quit") == 0)
-            break;
+        if (prompt)
+            std::cout << ">>> " << std::flush;
         try {
-            sexpr exp = eval(read(tmp), global_env);
+            sexpr exp = eval(read(tokens), global_env);
             global_env->add("_", exp);
             if (out)
                 std::cout << "_: " << to_str(exp) << std::endl;
@@ -821,7 +821,6 @@ int main(int argc, char* argv[]) {
         .add("symbol?", make_lambda(symbolpfn))
         .add("defvar", make_lambda(defvarfn))
         .add("print-globals", make_lambda(envfn))
-        .add("print-locals", make_lambda_va(localsfn))
         .add("pr", make_lambda_va(prfn))
         .add("load", make_lambda(loadfn))
         .add("sin", make_lambda(sinfn))
