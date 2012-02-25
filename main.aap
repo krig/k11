@@ -11,7 +11,7 @@ CXX = /opt/bin/g++-4.7
 CFLAGS += -Wall -Wextra -Werror -Wno-unused -DDEBUG=1
 CXXFLAGS += -Wall -Wextra -Werror -Wno-unused -std=c++0x -DDEBUG=1
 LDFLAGS += -Wall
-INCLUDE += -isystem /opt/include
+INCLUDE += -isystem /opt/include -Isrc
         
 @if sys.platform == 'darwin':
     LIBS += -L/opt/lib
@@ -27,3 +27,4 @@ INCLUDE += -isystem /opt/include
 :program bin/life : src/tests/life.cpp
 :program bin/print : src/tests/print.cpp
 :program bin/looping : src/tests/looping.cpp
+:program bin/iter : src/tests/iter.cpp

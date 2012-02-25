@@ -299,9 +299,14 @@ sexpr read_ahead(token_stream& s, token_stream::Token token) {
     }
 }
 
+sexpr expand(const sexpr& x, bool toplevel = false) {
+    // macro expansion, todo
+    return x;
+}
+
 sexpr read(token_stream& s) {
     token_stream::Token tok = s.next();
-    return read_ahead(s, tok);
+    return expand(read_ahead(s, tok), true);
 }
 
 class environment {
@@ -671,12 +676,17 @@ namespace {
     }
 
     sexpr carfn(const sexpr& arg) {
-        return get<sexprs>(arg).front();
+        const auto& l = get<sexprs>(arg);
+        if (l.size() > 0)
+            return l.front();
+        return l;
     }
 
     sexpr cdrfn(const sexpr& arg) {
-        const auto& lst = get<sexprs>(arg);
-        return sexprs(++lst.begin(), lst.end());
+        const auto& l = get<sexprs>(arg);
+        if (l.size() > 0)
+            return sexprs(++l.begin(), l.end());
+        return l;
     }
 
     sexpr consfn(const sexprs& args) {
