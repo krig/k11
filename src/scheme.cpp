@@ -432,16 +432,6 @@ struct lambda_impl_2<2, Fn> {
     boost::function<Fn> _fn;
 };
 
-template <typename Fn>
-struct lambda_impl_va {
-    lambda_impl_va(const Fn& fn) : _fn(fn) {
-    }
-    sexpr operator()(const void* arghack) {
-        return _fn(*(const sexprs*)(arghack));
-    }
-    boost::function<Fn> _fn;
-};
-
 sexpr make_procedure(const sexprs& vars, const sexpr& exp, const envptr& env) {
     return procedure_ptr(new procedure(vars, exp, env));
 }
@@ -453,7 +443,9 @@ sexpr make_lambda(const Fn& fn) {
 
 template <typename Fn>
 sexpr make_lambda_va(const Fn& fn) {
-    return lambda(lambda_impl_va<Fn>(fn));
+    return lambda([=](const void* a) {
+            return fn(*(const sexprs*)a);
+        });
 }
 
 sexpr eval(sexpr x, envptr env) {
