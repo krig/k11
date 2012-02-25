@@ -6,7 +6,7 @@ LDFLAGS=-g
 
 all: scheme
 
-scheme: scheme.o
+scheme: scheme.o tokens.o
 	$(CXX) $(LDFLAGS) -o $@ $^
 
 

@@ -13,6 +13,7 @@
 #include <boost/shared_ptr.hpp>
 #include <boost/type_traits.hpp>
 #include <boost/unordered_map.hpp>
+#include <boost/exception/diagnostic_information.hpp>
 #include <vector>
 #include <string>
 #include <sstream>
@@ -22,169 +23,75 @@
 #include <stdlib.h>
 #include <math.h>
 #include "join.hpp"
+#include "tokens.hpp"
 
-class token_stream {
+using namespace std;
+using namespace boost;
+
+class symbol : public string {
 public:
-    enum Token {
-        Eof,
-        LParen,
-        RParen,
-        LMap,
-        RMap,
-        LVec,
-        RVec,
-        Symbol,
-        Number,
-        String,
-        Quote,
-        Quasiquote,
-        Unquote,
-        UnquoteSplicing,
-    };
-    token_stream(std::istream& src) : _src(src) {
+    symbol() : string() {
     }
-
-    Token next() {
-        text = "";
-
-        if (!_src.good())
-            return Eof;
-
-        // eat whitespace and comments
-        int ch = _src.get();
-        while (isspace(ch) || ch == ';') {
-            while (isspace(ch))
-                ch = _src.get();
-            if (ch == ';') {
-                while (ch != '\n' && _src.good())
-                    ch = _src.get();
-            }
-        }
-
-        if (!_src.good())
-            return Eof;
-
-        switch (ch) {
-        case '(': return LParen;
-        case ')': return RParen;
-        case '{': return LMap;
-        case '}': return RMap;
-        case '[': return LVec;
-        case ']': return RVec;
-        case '\'': text = "quote"; return Quote;
-        case '`': text = "quasiquote"; return Quasiquote;
-        case ',': {
-            if (_src.get() == '@') {
-                text = "unquote-splicing";
-                return UnquoteSplicing;
-            }
-            _src.unget();
-            text = "unquote";
-            return Unquote;
-        }
-        case '"': fill_string(); return String;
-        default: {
-            fill_text(ch);
-            const char* b = text.c_str();
-            if (((*b == '-' || *b == '.') && isdigit(*(b+1))) ||
-                     isdigit(*b)) {
-                return Number;
-            }
-            else {
-                return Symbol;
-            }
-        }
-        }
+    symbol(const char* a, const char* b) : string(a, b) {
     }
-
-    std::string text;
-
-private:
-    void fill_text(int ch) {
-        while (!isspace(ch) && ch != ')') {
-            text += (char)ch;
-            ch = _src.get();
-        }
-        _src.unget();
+    explicit symbol(const char* s) : string(s) {
     }
-
-    void fill_string() {
-        std::stringstream ss;
-        int ch = _src.get();
-        while (ch != '"') {
-            if (ch == '\\') {
-                switch (_src.get()) {
-                case '\\': ss << '\\'; break;
-                case 'n': ss << '\n'; break;
-                case 'r': ss << '\r'; break;
-                case 't': ss << '\t'; break;
-                case '"': ss << '"'; break;
-                default: throw std::runtime_error("unrecognized escape sequence in string");
-                }
-            }
-            else {
-                ss << (char)ch;
-            }
-            ch = _src.get();
-        }
-        text = ss.str();
-    }
-
-    std::istream& _src;
-};
-
-class symbol : public std::string {
-public:
-    symbol() : std::string() {
-    }
-    symbol(const char* a, const char* b) : std::string(a, b) {
-    }
-    explicit symbol(const char* s) : std::string(s) {
-    }
-    explicit symbol(const std::string& o) : std::string(o) {
+    explicit symbol(const string& o) : string(o) {
     }
 };
 
 class procedure;
 
-typedef boost::variant<double, std::string, symbol> atom;
-typedef boost::shared_ptr<procedure> procedure_ptr;
-typedef boost::make_recursive_variant<atom,
-                                      std::vector<boost::recursive_variant_>,
-                                      procedure_ptr,
-                                      boost::function1<boost::recursive_variant_, const void*>>::type sexpr;
-typedef std::vector<sexpr> sexprs;
-typedef boost::function1<sexpr, const void*> lambda;
-
-template <typename Atom>
-void vec_arg(sexprs& v, const Atom& a) {
-    v.push_back(atom(a));
-}
+typedef variant<double, string, symbol> atom;
+typedef shared_ptr<procedure> procedure_ptr;
+typedef make_recursive_variant<atom,
+                               vector<recursive_variant_>,
+                               procedure_ptr,
+                               function1<recursive_variant_,
+                                         const void*>>::type sexpr;
+typedef vector<sexpr> sexprs;
+typedef function1<sexpr, const void*> lambda;
 
 void vec_arg(sexprs& v, int a) {
     v.push_back(atom((double)a));
 }
 
+void vec_arg(sexprs& v, double a) {
+    v.push_back(atom(a));
+}
+
+void vec_arg(sexprs& v, const symbol& a) {
+    v.push_back(atom(a));
+}
+
+void vec_arg(sexprs& v, const std::string& a) {
+    v.push_back(atom(a));
+}
+
 void vec_arg(sexprs& v, const sexpr& l) {
+   v.push_back(l);
+}
+
+void vec_arg(sexprs& v, const sexprs& l) {
     v.push_back(l);
 }
 
 template <class T, typename... Ts>
 void vec_arg(sexprs& v, const T& t, const Ts&... ts) {
-    v.push_back(t);
+    vec_arg(v, t);
     vec_arg(v, ts...);
 }
 
 template <typename... Ts>
-sexpr list(const Ts&... ts) {
+sexprs make_list(const Ts&... ts) {
     sexprs v;
     v.reserve(sizeof...(ts));
     vec_arg(v, ts...);
-    return sexpr(v);
+    return v;
 }
 
-std::string escape_string(const std::string& s) {
-    std::stringstream ss;
+string escape_string(const string& s) {
+    stringstream ss;
     ss << '"';
     for (auto i = s.begin(); i != s.end(); ++i) {
         if (isgraph(*i) || *i == ' ')
@@ -203,62 +110,76 @@ std::string escape_string(const std::string& s) {
     return ss.str();
 }
 
-class atom2s : public boost::static_visitor<std::string>
+class atom2s : public static_visitor<string>
 {
 public:
-    std::string operator()(const std::string& value) const {
+    string operator()(const string& value) const {
         return escape_string(value);
     }
 
-    std::string operator()(const symbol& value) const {
+    string operator()(const symbol& value) const {
         return value;
     }
 
-    std::string operator()(double value) const {
+    string operator()(double value) const {
         char tmp[80];
         snprintf(tmp, sizeof(tmp), "%.6g", value);
         return tmp;
     }
 };
 
-class sexpr2s : public boost::static_visitor<std::string>
+class sexpr2s : public static_visitor<string>
 {
 public:
 
-    std::string operator()(const atom& a) const {
-        return boost::apply_visitor(atom2s(), a);
+    string operator()(const atom& a) const {
+        return apply_visitor(atom2s(), a);
     }
 
-    std::string operator()(const lambda& fn) const {
+    string operator()(const lambda& fn) const {
         return "<builtin>";
     }
 
-    std::string operator()(const procedure_ptr& fn) const {
+    string operator()(const procedure_ptr& fn) const {
         return "<fn>";
     }
 
-    std::string operator()(const sexprs& v) const {
+    string operator()(const sexprs& v) const {
         if (v.size() == 0)
             return "nil";
 
-        std::stringstream ss;
+        stringstream ss;
         ss << "("
            << util::mapjoin(" ", v.begin(), v.end(), [](const sexpr& x) {
-                return boost::apply_visitor(sexpr2s(), x);
+                return apply_visitor(sexpr2s(), x);
             })
            << ")";
         return ss.str();
     }
 };
 
-std::string to_str(const sexpr& l) {
-    return boost::apply_visitor(sexpr2s(), l);
+string to_str(const sexpr& l) {
+    return apply_visitor(sexpr2s(), l);
 }
 
-std::string to_str(const atom& a) {
-    return boost::apply_visitor(atom2s(), a);
+string to_str(const atom& a) {
+    return apply_visitor(atom2s(), a);
 }
 
+struct syntax_error : public runtime_error {
+    explicit syntax_error(const sexpr& sx)
+        : runtime_error(to_str(sx) + ": syntax error") {
+    }
+    syntax_error(const sexpr& sx, const string& msg)
+        : runtime_error(to_str(sx) + ": " + msg) {
+    }
+};
+
+#define REQUIRE(sx, cond) \
+    do{if(!(cond)){throw syntax_error(sx, "fails " #cond);}}while(false)
+
+#define REQUIRE2(sx, cond, msg) \
+    do{if(!(cond)){throw syntax_error(sx, msg);}}while(false)
 
 sexpr read(token_stream& s);
 
@@ -276,7 +197,7 @@ sexpr read_ahead(token_stream& s, token_stream::Token token) {
         }
     }
     case token_stream::RParen:
-        throw std::runtime_error("unexpected )");
+        throw runtime_error("unexpected )");
     case token_stream::Quote:
     case token_stream::Quasiquote:
     case token_stream::Unquote:
@@ -289,21 +210,21 @@ sexpr read_ahead(token_stream& s, token_stream::Token token) {
     case token_stream::Symbol:
         return atom(symbol(s.text));
     case token_stream::Number:
-        return atom(boost::lexical_cast<double>(s.text));
+        return atom(lexical_cast<double>(s.text));
     default:
     case token_stream::String:
         return atom(s.text);
     }
 }
 
-sexpr expand(const sexpr& x, bool toplevel = false) {
-    // macro expansion, todo
-    return x;
-}
+sexpr expand(sexpr x, bool toplevel = false);
 
 sexpr read(token_stream& s) {
-    token_stream::Token tok = s.next();
-    return expand(read_ahead(s, tok), true);
+    return read_ahead(s, s.next());
+}
+
+sexpr parse(token_stream& s) {
+    return expand(read(s), true);
 }
 
 class environment {
@@ -316,12 +237,12 @@ public:
         _env["nil"] = sexprs();
     }
 
-    environment(const sexprs& vars, const sexprs& args, const boost::shared_ptr<environment> parent)
+    environment(const sexprs& vars, const sexprs& args, const shared_ptr<environment> parent)
         : _parent(parent),
           _env() {
         _parent = parent;
         if (vars.size() != args.size())
-            throw std::runtime_error("argument arity mismatch");
+            throw runtime_error("argument arity mismatch");
         for (auto i = vars.begin(), k = args.begin(); i != vars.end(); ++i, ++k) {
             _env[to_str(*i)] = *k;
         }
@@ -332,20 +253,20 @@ public:
         return *this;
     }
 
-    environment& find(const std::string& x) {
+    environment& find(const string& x) {
         if (_env.find(x) != _env.end())
             return *this;
         else if (_parent)
             return _parent->find(x);
         else
-            throw std::runtime_error("unknown symbol: " + x);
+            throw runtime_error("unknown symbol: " + x);
     }
 
     environment& find(const sexpr& x) {
         return find(to_str(x));
     }
 
-    sexpr& operator[](const std::string& s) {
+    sexpr& operator[](const string& s) {
         return _env[s];
     }
 
@@ -353,16 +274,16 @@ public:
         return _env[to_str(x)];
     }
 
-    boost::shared_ptr<environment> _parent;
-    boost::unordered_map<std::string, sexpr> _env;
+    shared_ptr<environment> _parent;
+    unordered_map<string, sexpr> _env;
 };
 
-typedef boost::shared_ptr<environment> envptr;
+typedef shared_ptr<environment> envptr;
 
 bool is_call_to(const sexprs& v, const char* s) {
-    auto a = boost::get<atom>(&v.front());
+    auto a = get<atom>(&v.front());
     if (a) {
-        auto sym = boost::get<symbol>(a);
+        auto sym = get<symbol>(a);
         if (sym) {
             return *sym == s;
         }
@@ -371,18 +292,24 @@ bool is_call_to(const sexprs& v, const char* s) {
 }
 
 bool truth(const sexpr& x) {
-    const sexprs* v = boost::get<sexprs>(&x);
+    const sexprs* v = get<sexprs>(&x);
     return !(v && v->size() == 0);
 }
 
-sexpr eval(sexpr x, envptr env);
+namespace {
+    envptr global_env;
+
+    map<symbol, sexpr> macro_table;
+}
+
+sexpr eval(sexpr x, envptr env = global_env);
 
 class procedure {
 public:
     procedure(const sexprs& vars, const sexpr& exp, const envptr& parent)
         : _vars(vars), _exp(exp), _parent(parent), _variadic(false) {
         const symbol* sym;
-        if ((sym = boost::get<symbol>(&boost::get<atom>(vars.back()))) && (*sym == "...")) {
+        if ((sym = get<symbol>(&get<atom>(vars.back()))) && (*sym == "...")) {
             _variadic = true;
             _vars.pop_back();
         }
@@ -402,10 +329,10 @@ struct lambda_impl_2<0, Fn> {
     }
     sexpr operator()(const void* arghack) {
         const sexprs& args = *(const sexprs*)(arghack);
-        if (args.size() != 0) throw std::runtime_error("bad arity");
+        if (args.size() != 0) throw runtime_error("bad arity");
         return _fn();
     }
-    boost::function<Fn> _fn;
+    function<Fn> _fn;
 };
 
 template <typename Fn>
@@ -414,10 +341,10 @@ struct lambda_impl_2<1, Fn> {
     }
     sexpr operator()(const void* arghack) {
         const sexprs& args = *(const sexprs*)(arghack);
-        if (args.size() != 1) throw std::runtime_error("bad arity");
+        if (args.size() != 1) throw runtime_error("bad arity");
         return _fn(args[0]);
     }
-    boost::function<Fn> _fn;
+    function<Fn> _fn;
 };
 
 template <typename Fn>
@@ -426,10 +353,10 @@ struct lambda_impl_2<2, Fn> {
     }
     sexpr operator()(const void* arghack) {
         const sexprs& args = *(const sexprs*)(arghack);
-        if (args.size() != 2) throw std::runtime_error("bad arity");
+        if (args.size() != 2) throw runtime_error("bad arity");
         return _fn(args[0], args[1]);
     }
-    boost::function<Fn> _fn;
+    function<Fn> _fn;
 };
 
 sexpr make_procedure(const sexprs& vars, const sexpr& exp, const envptr& env) {
@@ -438,7 +365,7 @@ sexpr make_procedure(const sexprs& vars, const sexpr& exp, const envptr& env) {
 
 template <typename Fn>
 sexpr make_lambda(const Fn& fn) {
-    return lambda(lambda_impl_2<boost::function_traits<Fn>::arity, Fn>(fn));
+    return lambda(lambda_impl_2<function_traits<Fn>::arity, Fn>(fn));
 }
 
 template <typename Fn>
@@ -448,69 +375,198 @@ sexpr make_lambda_va(const Fn& fn) {
         });
 }
 
+sexprs map_expand(sexprs lst, bool toplevel = false) {
+    for (sexpr& x : lst)
+        x = expand(x, toplevel);
+    return lst;
+}
+
+sexpr expand_quasiquote(const sexpr& x);
+
+sexprs cdr(const sexprs& x) {
+    if (x.size() <= 1)
+        return sexprs();
+    return sexprs(++x.begin(), x.end());
+}
+
+sexpr expand(sexpr x, bool toplevel) {
+    // macro expansion, todo
+
+    if (get<sexprs>(&x) == nullptr)
+        return x; // non-lists pass through
+    sexprs& xl = get<sexprs>(x);
+
+    REQUIRE(x, xl.size() > 0);
+
+    if (is_call_to(xl, "quote")) {
+        REQUIRE(x, xl.size() == 2);
+        return x;
+    }
+    else if (is_call_to(xl, "if")) {
+        if (xl.size() == 3)
+            xl.push_back(sexprs());
+        REQUIRE(x, xl.size() == 4);
+        return map_expand(xl);
+    }
+    else if (is_call_to(xl, "=") || is_call_to(xl, ":")) {
+        REQUIRE(x, xl.size() == 3);
+        auto var = &xl[1];
+        REQUIRE(x, get<symbol>(get<atom>(var)));
+        return make_list(xl[0], xl[1], expand(xl[2]));
+    }
+    else if (is_call_to(xl, "def")) {
+        // valid forms: (def foo () body)
+        // (def foo (x ...) body)
+        REQUIRE(x, xl.size() >= 4);
+        auto& _def = xl[0];
+        auto& f = xl[1];
+        auto& v = xl[2];
+        sexprs fn;
+        fn.push_back(sexpr(atom(symbol("fn"))));
+        fn.push_back(v);
+        fn.insert(fn.end(), xl.begin()+3, xl.end());
+        sexpr set_ = atom(symbol(":"));
+        return expand(make_list(set_, f, fn));
+    }
+    else if (is_call_to(xl, "defmacro")) {
+        // (defmacro foo proc)
+        REQUIRE2(x, toplevel, "defmacro only allowed at top level");
+        REQUIRE(x, xl.size() == 3);
+        auto var = get<symbol>(get<atom>(xl[1]));
+        sexpr proc = eval(expand(xl[2]));
+        REQUIRE(x, get<procedure_ptr>(proc) || get<lambda>(proc));
+
+        macro_table[var] = proc;
+
+        return sexprs();
+    }
+    else if (is_call_to(xl, "do")) {
+        if (xl.size() == 1)
+            return sexprs();
+        return map_expand(xl, toplevel);
+    }
+    else if (is_call_to(xl, "fn")) {
+        // (fn (x) e1 e2) => (fn (x) (do e1 e2))
+        REQUIRE(x, xl.size() >= 3);
+        auto vars = get<sexprs>(&xl[1]);
+        REQUIRE(x, vars);
+        for (auto& var : *vars)
+            REQUIRE(x, get<symbol>(get<atom>(&var)));
+        if (xl.size() == 3)
+            return x;
+
+        sexprs body;
+        body.push_back(atom(symbol("do")));
+        body.insert(body.end(), xl.begin()+2, xl.end());
+        return make_list(xl[0], *vars, expand(body));
+    }
+    else if (is_call_to(xl, "quasiquote")) {
+        REQUIRE(x, xl.size() == 2);
+        return expand_quasiquote(xl[1]);
+    }
+    else if (symbol* s = get<symbol>(get<atom>(&xl[0]))) {
+        auto mac = macro_table.find(*s);
+        if (mac != macro_table.end()) {
+            if (auto p = get<procedure_ptr>(&(mac->second))) {
+                sexprs exps(xl.begin()+1, xl.end());
+
+                const auto& proc = *(*p);
+                if (proc._variadic) {
+                    const size_t nargs = proc._vars.size()-1;
+                    if (exps.size() < nargs)
+                        throw runtime_error("bad arity");
+                    sexprs tail(exps.begin()+nargs, exps.end());
+                    exps.erase(exps.begin()+nargs, exps.end());
+                    exps.push_back(tail);
+                }
+                envptr env(new environment(proc._vars, exps, proc._parent));
+                return expand(eval(proc._exp, env), toplevel);
+            }
+            else if (auto l = get<lambda>(&(mac->second))) {
+                sexprs exps(xl.begin()+1, xl.end());
+                return expand((*l)(&exps), toplevel);
+            }
+            else {
+                throw std::runtime_error("bad data in macro_table");
+            }
+        }
+    }
+    return map_expand(xl);
+}
+
+bool is_pair(const sexpr& x) {
+    auto p = get<sexprs>(&x);
+    return p && p->size() > 0;
+}
+
+sexpr expand_quasiquote(const sexpr& x) {
+    if (!is_pair(x))
+        return make_list(symbol("quote"), x);
+    auto& xl = get<sexprs>(x);
+
+    REQUIRE2(x, !is_call_to(xl, "unquote-splicing"), "can't splice here");
+
+    if (is_call_to(xl, "unquote")) {
+        REQUIRE(x, xl.size() == 2);
+        return xl[1];
+    }
+    else if (is_pair(xl[0]) && is_call_to(get<sexprs>(xl[0]), "unquote-splicing")) {
+        auto& xl0 = get<sexprs>(xl[0]);
+        REQUIRE(xl0, xl0.size() == 2);
+        return make_list(symbol("append"), xl0[1], expand_quasiquote(cdr(xl)));
+    }
+    else {
+        return make_list(symbol("cons"), expand_quasiquote(xl[0]),
+                         expand_quasiquote(cdr(xl)));
+    }
+}
+
 sexpr eval(sexpr x, envptr env) {
     while (true) {
-        if (auto a = boost::get<atom>(&x)) {
-            if (auto s = boost::get<symbol>(a)) {
+        if (auto a = get<atom>(&x)) {
+            if (auto s = get<symbol>(a)) {
                 return env->find(*s)[*s];
             }
             return *a;
         }
-        else if (auto v = boost::get<sexprs>(&x)) {
+        else if (auto v = get<sexprs>(&x)) {
             if (v->size() == 0) {
                 return x;
             }
             else if (is_call_to(*v, "quote")) {
-                if (v->size() != 2)
-                    throw std::runtime_error("incorrect arguments to quote");
                 return (*v)[1];
             }
             else if (is_call_to(*v, "if")) {
-                if (v->size() == 3) {
-                    auto& test = (*v)[1];
-                    auto& conseq = (*v)[2];
-                    if (truth(eval(test, env))) {
-                        x = conseq;
-                    }
-                    else {
-                        return sexpr(sexprs());
-                    }
-                }
-                else if (v->size() == 4) {
-                    auto& test = (*v)[1];
-                    auto& conseq = (*v)[2];
-                    auto& alt = (*v)[3];
-                    if (truth(eval(test, env))) {
-                        x = conseq;
-                    }
-                    else {
-                        x = alt;
-                    }
+                auto& test = (*v)[1];
+                auto& conseq = (*v)[2];
+                auto& alt = (*v)[3];
+                if (truth(eval(test, env))) {
+                    x = conseq;
                 }
                 else {
-                    throw std::runtime_error("incorrect arguments to if");
+                    x = alt;
                 }
             }
-            else if (is_call_to(*v, "set!")) {
-                if (v->size() != 3)
-                    throw std::runtime_error("incorrect arguments to set!");
+            else if (is_call_to(*v, "=")) {
                 auto& var = (*v)[1];
                 auto& exp = (*v)[2];
                 env->find(var)[var] = eval(exp, env);
                 return var;
             }
+            else if (is_call_to(*v, ":")) {
+                auto& var = (*v)[1];
+                auto& exp = (*v)[2];
+                (*env)[var] = eval(exp, env);
+                return var;
+            }
             else if (is_call_to(*v, "def")) {
-                if (v->size() != 3)
-                    throw std::runtime_error("incorrect arguments to def");
                 auto& var = (*v)[1];
                 auto& exp = (*v)[2];
                 (*env)[var] = eval(exp, env);
                 return var;
             }
             else if (is_call_to(*v, "fn")) {
-                if (v->size() != 3)
-                    throw std::runtime_error("incorrect arguments to fn");
-                auto& vars = boost::get<sexprs>((*v)[1]);
+                auto& vars = get<sexprs>((*v)[1]);
                 auto& exp = (*v)[2];
                 return make_procedure(vars, exp, env);
             }
@@ -530,15 +586,15 @@ sexpr eval(sexpr x, envptr env) {
                 exps.reserve(vsz);
                 for (size_t i = 1; i < vsz; ++i)
                     exps.push_back(eval((*v)[i], env));
-                if (auto l = boost::get<lambda>(&fn)) {
+                if (auto l = get<lambda>(&fn)) {
                     return (*l)(&exps);
                 }
-                else if (auto p = boost::get<procedure_ptr>(&fn)) {
+                else if (auto p = get<procedure_ptr>(&fn)) {
                     const auto& proc = *(*p);
                     if (proc._variadic) {
                         const size_t nargs = proc._vars.size()-1;
                         if (exps.size() < nargs)
-                            throw std::runtime_error("bad arity");
+                            throw runtime_error("bad arity");
                         sexprs tail(exps.begin()+nargs, exps.end());
                         exps.erase(exps.begin()+nargs, exps.end());
                         exps.push_back(tail);
@@ -547,74 +603,72 @@ sexpr eval(sexpr x, envptr env) {
                     env = envptr(new environment(proc._vars, exps, proc._parent));
                 }
                 else
-                    throw std::runtime_error("not callable");
+                    throw runtime_error("not callable");
             }
         }
     }
 }
 
-class pratom2s : public boost::static_visitor<std::string>
+class pratom2s : public static_visitor<string>
 {
 public:
-    std::string operator()(const std::string& value) const {
+    string operator()(const string& value) const {
         return value;
     }
 
-    std::string operator()(const symbol& value) const {
+    string operator()(const symbol& value) const {
         return value;
     }
 
-    std::string operator()(double value) const {
+    string operator()(double value) const {
         char tmp[80];
         snprintf(tmp, sizeof(tmp), "%g", value);
         return tmp;
     }
 };
 
-class prsexpr2s : public boost::static_visitor<std::string>
+class prsexpr2s : public static_visitor<string>
 {
 public:
 
-    std::string operator()(const atom& a) const {
-        return boost::apply_visitor(pratom2s(), a);
+    string operator()(const atom& a) const {
+        return apply_visitor(pratom2s(), a);
     }
 
-    std::string operator()(const lambda& fn) const {
+    string operator()(const lambda& fn) const {
         return "<builtin>";
     }
 
-    std::string operator()(const procedure_ptr& fn) const {
+    string operator()(const procedure_ptr& fn) const {
         return "<fn>";
     }
 
-    std::string operator()(const sexprs& v) const {
+    string operator()(const sexprs& v) const {
         if (v.size() == 0)
             return "nil";
 
-        std::stringstream ss;
+        stringstream ss;
         ss << "(";
         auto i = v.begin();
         if (i != v.end()) {
-            ss << boost::apply_visitor(prsexpr2s(), *i++);
+            ss << apply_visitor(sexpr2s(), *i++);
         }
         for (; i != v.end(); ++i) {
-            ss << " " << boost::apply_visitor(prsexpr2s(), *i);
+            ss << " " << apply_visitor(sexpr2s(), *i);
         }
         ss << ")";
         return ss.str();
     }
 };
 
-std::string pr_to_str(const sexpr& l) {
-    return boost::apply_visitor(prsexpr2s(), l);
+string pr_to_str(const sexpr& l) {
+    return apply_visitor(prsexpr2s(), l);
 }
 
-void repl(std::istream& in, bool prompt, bool out);
+void repl(istream& in, bool prompt, bool out);
 
 namespace {
     using namespace boost;
-
-    envptr global_env;
 
     sexpr addfn(const sexprs& args) {
         double sum = 0.0;
@@ -723,7 +777,7 @@ namespace {
 
     sexpr envfn() {
         for (const auto& e : global_env->_env)
-            std::cout << e.first << "\t=\t" << to_str(e.second) << "\n";
+            cout << e.first << "\t=\t" << to_str(e.second) << "\n";
         return sexprs();
     }
 
@@ -769,16 +823,16 @@ namespace {
         if (args.size() == 0)
             return args;
         for (auto i = args.begin(); i != args.end(); ++i)
-            std::cout << pr_to_str(*i);
+            cout << pr_to_str(*i);
         return *args.begin();
     }
 
     sexpr loadfn(const sexpr& arg) {
-        std::string fname = get<std::string>(get<atom>(arg));
+        string fname = get<string>(get<atom>(arg));
 
-        std::ifstream f(fname.c_str());
+        ifstream f(fname.c_str());
         if (!f.is_open())
-            throw std::runtime_error("file not found");
+            throw runtime_error("file not found");
 
         repl(f, false, false);
         return sexprs();
@@ -791,33 +845,80 @@ namespace {
     sexpr asinfn(const sexpr& v) { return atom(asin(get<double>(get<atom>(v)))); }
     sexpr atanfn(const sexpr& v) { return atom(atan(get<double>(get<atom>(v)))); }
 
+    bool is_list_of_len(const sexpr& x, size_t len) {
+        auto l = get<sexprs>(&x);
+        return l && l->size() == len;
+    }
+
+    bool is_symbol(const sexpr& x) {
+        if (auto a = get<atom>(&x))
+            return get<symbol>(a) != nullptr;
+        return false;
+    }
+
+    bool is_even(size_t i) {
+        return (i%2) == 0;
+    }
+
+    sexpr letfn(const sexprs& args) {
+        sexprs x = make_list(symbol("let"));
+        x.insert(x.end(), args.begin(), args.end());
+        REQUIRE(x, args.size() > 1);
+        auto& bindings = args[0];
+        auto body = cdr(args);
+        REQUIRE2(x, is_pair(bindings), "illegal binding list");
+        auto& bindingslist = get<sexprs>(bindings);
+        REQUIRE2(x, is_even(bindingslist.size()), "illegal binding list");
+        sexprs vars;
+        sexprs vals;
+        for (size_t i = 0; i < bindingslist.size(); i += 2) {
+            REQUIRE2(x, is_symbol(bindingslist[i]), "illegal binding list");
+            vars.push_back(bindingslist[i]);
+            vals.push_back(bindingslist[i+1]);
+        }
+
+        sexprs lambda = make_list(symbol("fn"), vars);
+        sexprs lambda_body = map_expand(body);
+        lambda.insert(lambda.end(), lambda_body.begin(), lambda_body.end());
+        sexprs call;
+        call.push_back(lambda);
+        sexprs call_body = map_expand(vals);
+        call.insert(call.end(), call_body.begin(), call_body.end());
+        return call;
+    }
+
 }
 
 
 
-void repl(std::istream& in, bool prompt, bool out) {
+void repl(istream& in, bool prompt, bool out) {
     token_stream tokens(in);
     while (true) {
         if (in.eof())
             break;
         if (prompt)
-            std::cout << ">>> " << std::flush;
+            cout << ">>> " << flush;
         try {
-            sexpr exp = eval(read(tokens), global_env);
+            sexpr exp = eval(parse(tokens), global_env);
             global_env->add("_", exp);
             if (out)
-                std::cout << "  " << to_str(exp) << std::endl;
+                cout << "  " << to_str(exp) << endl;
         }
-        catch (boost::bad_get& e) {
-            std::cerr << "error: type mismatch" << std::endl;
+        catch (bad_get& e) {
+            cerr << "type mismatch: " << diagnostic_information(e) << endl;
+        }
+        catch (boost::exception& e) {
+            cerr << "error: " << diagnostic_information(e) << endl;
         }
         catch (std::exception& e) {
-            std::cerr << "error: " << e.what() << std::endl;
+            cerr << "error: " << e.what() << endl;
         }
     }
 }
 
 int main(int argc, char* argv[]) {
+    macro_table[symbol("let")] = make_lambda_va(letfn);
+    
     global_env = envptr(new environment);
 
     global_env->
@@ -853,8 +954,8 @@ int main(int argc, char* argv[]) {
         .add("atan", make_lambda(atanfn))
         ;
     if (argc > 1) {
-        std::istringstream s(argv[1]);
+        istringstream s(argv[1]);
         repl(s, false, false);
     }
-    repl(std::cin, true, true);
+    repl(cin, true, true);
 }
