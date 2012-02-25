@@ -28,3 +28,4 @@ INCLUDE += -isystem /opt/include -Isrc
 :program bin/print : src/tests/print.cpp
 :program bin/looping : src/tests/looping.cpp
 :program bin/iter : src/tests/iter.cpp
+:program bin/join : src/tests/join.cpp

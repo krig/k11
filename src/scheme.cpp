@@ -21,6 +21,7 @@
 #include <fstream>
 #include <stdlib.h>
 #include <math.h>
+#include "join.hpp"
 
 class token_stream {
 public:
@@ -241,15 +242,11 @@ public:
             return "nil";
 
         std::stringstream ss;
-        ss << "(";
-        auto i = v.begin();
-        if (i != v.end()) {
-            ss << boost::apply_visitor(sexpr2s(), *i++);
-        }
-        for (; i != v.end(); ++i) {
-            ss << " " << boost::apply_visitor(sexpr2s(), *i);
-        }
-        ss << ")";
+        ss << "("
+           << util::mapjoin(" ", v.begin(), v.end(), [](const sexpr& x) {
+                return boost::apply_visitor(sexpr2s(), x);
+            })
+           << ")";
         return ss.str();
     }
 };
