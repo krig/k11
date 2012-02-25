@@ -144,9 +144,13 @@ public:
     }
 };
 
+class procedure;
+
 typedef boost::variant<double, std::string, symbol> atom;
+typedef boost::shared_ptr<procedure> procedure_ptr;
 typedef boost::make_recursive_variant<atom,
                                       std::vector<boost::recursive_variant_>,
+                                      procedure_ptr,
                                       boost::function1<boost::recursive_variant_, const void*>>::type sexpr;
 typedef std::vector<sexpr> sexprs;
 typedef boost::function1<sexpr, const void*> lambda;
@@ -225,6 +229,10 @@ public:
     }
 
     std::string operator()(const lambda& fn) const {
+        return "<builtin>";
+    }
+
+    std::string operator()(const procedure_ptr& fn) const {
         return "<fn>";
     }
 
@@ -300,19 +308,15 @@ class environment {
 public:
     environment()
         : _parent(),
-          _env(),
-          _true(symbol("true")),
-          _false() {
-        _env["true"] = _true;
-        _env["false"] = _false;
-        _env["nil"] = _false;
+          _env() {
+        _env["t"] = atom(symbol("t"));
+        _env["f"] = sexprs();
+        _env["nil"] = sexprs();
     }
 
     environment(const sexprs& vars, const sexprs& args, const boost::shared_ptr<environment> parent)
         : _parent(parent),
-          _env(),
-          _true(symbol("true")),
-          _false() {
+          _env() {
         _parent = parent;
         if (vars.size() != args.size())
             throw std::runtime_error("argument arity mismatch");
@@ -349,9 +353,6 @@ public:
 
     boost::shared_ptr<environment> _parent;
     boost::unordered_map<std::string, sexpr> _env;
-
-    atom _true;
-    sexprs _false;
 };
 
 typedef boost::shared_ptr<environment> envptr;
@@ -372,19 +373,22 @@ bool truth(const sexpr& x) {
     return !(v && v->size() == 0);
 }
 
-sexpr eval(sexpr x, const envptr& env);
+sexpr eval(sexpr x, envptr env);
 
-struct lambda_impl {
-    lambda_impl(const sexprs& vars, const sexpr& exp, const envptr& parent) : _vars(vars), _exp(exp), _parent(parent) {
-    }
-    sexpr operator()(const void* arghack) {
-        const sexprs& args = *(const sexprs*)(arghack);
-        envptr env(new environment(_vars, args, _parent));
-        return eval(_exp, env);
+class procedure {
+public:
+    procedure(const sexprs& vars, const sexpr& exp, const envptr& parent)
+        : _vars(vars), _exp(exp), _parent(parent), _variadic(false) {
+        const symbol* sym;
+        if ((sym = boost::get<symbol>(&boost::get<atom>(vars.back()))) && (*sym == "...")) {
+            _variadic = true;
+            _vars.pop_back();
+        }
     }
     sexprs _vars;
     sexpr _exp;
     envptr _parent;
+    bool _variadic;
 };
 
 template <int, typename Fn>
@@ -436,8 +440,8 @@ struct lambda_impl_va {
     boost::function<Fn> _fn;
 };
 
-sexpr make_lambda(const sexprs& vars, const sexpr& exp, const envptr& env) {
-    return lambda(lambda_impl(vars, exp, env));
+sexpr make_procedure(const sexprs& vars, const sexpr& exp, const envptr& env) {
+    return procedure_ptr(new procedure(vars, exp, env));
 }
 
 template <typename Fn>
@@ -450,7 +454,7 @@ sexpr make_lambda_va(const Fn& fn) {
     return lambda(lambda_impl_va<Fn>(fn));
 }
 
-sexpr eval(sexpr x, const envptr& env) {
+sexpr eval(sexpr x, envptr env) {
     while (true) {
         if (auto a = boost::get<atom>(&x)) {
             if (auto s = boost::get<symbol>(a)) {
@@ -514,7 +518,7 @@ sexpr eval(sexpr x, const envptr& env) {
                     throw std::runtime_error("incorrect arguments to fn");
                 auto& vars = boost::get<sexprs>((*v)[1]);
                 auto& exp = (*v)[2];
-                return make_lambda(vars, exp, env);
+                return make_procedure(vars, exp, env);
             }
             else if (is_call_to(*v, "do")) {
                 for (size_t i = 1; i < v->size()-1; ++i) {
@@ -527,12 +531,29 @@ sexpr eval(sexpr x, const envptr& env) {
             }
             else {
                 const size_t vsz = v->size();
-                lambda proc = boost::get<lambda>(eval((*v)[0], env));
+                sexpr fn = eval((*v)[0], env);
                 sexprs exps;
                 exps.reserve(vsz);
                 for (size_t i = 1; i < vsz; ++i)
                     exps.push_back(eval((*v)[i], env));
-                return proc(&exps);
+                if (auto l = boost::get<lambda>(&fn)) {
+                    return (*l)(&exps);
+                }
+                else if (auto p = boost::get<procedure_ptr>(&fn)) {
+                    const auto& proc = *(*p);
+                    if (proc._variadic) {
+                        const size_t nargs = proc._vars.size()-1;
+                        if (exps.size() < nargs)
+                            throw std::runtime_error("bad arity");
+                        sexprs tail(exps.begin()+nargs, exps.end());
+                        exps.erase(exps.begin()+nargs, exps.end());
+                        exps.push_back(tail);
+                    }
+                    x = proc._exp;
+                    env = envptr(new environment(proc._vars, exps, proc._parent));
+                }
+                else
+                    throw std::runtime_error("not callable");
             }
         }
     }
@@ -565,7 +586,11 @@ public:
     }
 
     std::string operator()(const lambda& fn) const {
-        return "(lambda-function)";
+        return "<builtin>";
+    }
+
+    std::string operator()(const procedure_ptr& fn) const {
+        return "<fn>";
     }
 
     std::string operator()(const sexprs& v) const {
@@ -599,8 +624,8 @@ namespace {
 
     sexpr addfn(const sexprs& args) {
         double sum = 0.0;
-        for (auto i = args.begin(); i != args.end(); ++i)
-            sum += get<double>(get<atom>(*i));
+        for (auto i : args)
+            sum += get<double>(get<atom>(i));
         return atom(sum);
     }
 
@@ -633,8 +658,8 @@ namespace {
 
     sexpr notfn(const sexpr& arg) {
         if (truth(arg))
-            return global_env->_false;
-        return global_env->_true;
+            return sexprs();
+        return atom(symbol("t"));
     }
 
     sexpr listfn(const sexprs& args) {
@@ -681,15 +706,15 @@ namespace {
     sexpr nullpfn(const sexpr& arg) {
         auto lst = get<sexprs>(&arg);
         if (lst && lst->size() == 0) {
-            return global_env->_true;
+            return atom(symbol("t"));
         }
-        return global_env->_false;
+        return sexprs();
     }
     sexpr symbolpfn(const sexpr& arg) {
         auto a = get<atom>(&arg);
         if (a && get<symbol>(a))
             return *a;
-        return global_env->_false;
+        return sexprs();
     }
 
     sexpr defvarfn(const sexpr& var, const sexpr& exp) {
@@ -698,49 +723,47 @@ namespace {
     }
 
     sexpr envfn() {
-        auto i = global_env->_env.begin(), e = global_env->_env.end();
-        for (; i != e; ++i) {
-            std::cout << i->first << "\t=\t" << to_str(i->second) << "\n";
-        }
-        return global_env->_false;
+        for (const auto& e : global_env->_env)
+            std::cout << e.first << "\t=\t" << to_str(e.second) << "\n";
+        return sexprs();
     }
 
     // TODO: generalize for non-numeric types
 
     sexpr ltfn(const sexpr& a, const sexpr& b) {
         if (get<double>(get<atom>(a)) < get<double>(get<atom>(b)))
-            return global_env->_true;
-        return global_env->_false;
+            return atom(symbol("t"));
+        return sexprs();
     }
 
     sexpr gtfn(const sexpr& a, const sexpr& b) {
         if (get<double>(get<atom>(a)) > get<double>(get<atom>(b)))
-            return global_env->_true;
-        return global_env->_false;
+            return atom(symbol("t"));
+        return sexprs();
     }
 
     sexpr lteqfn(const sexpr& a, const sexpr& b) {
         if (get<double>(get<atom>(a)) <= get<double>(get<atom>(b)))
-            return global_env->_true;
-        return global_env->_false;
+            return atom(symbol("t"));
+        return sexprs();
     }
 
     sexpr gteqfn(const sexpr& a, const sexpr& b) {
         if (get<double>(get<atom>(a)) >= get<double>(get<atom>(b)))
-            return global_env->_true;
-        return global_env->_false;
+            return atom(symbol("t"));
+        return sexprs();
     }
 
     sexpr eqfn(const sexpr& a0, const sexpr& a1) {
         if (get<atom>(a0) == get<atom>(a1))
-            return global_env->_true;
-        return global_env->_false;
+            return atom(symbol("t"));
+        return sexprs();
     }
 
     sexpr neqfn(const sexpr& a0, const sexpr& a1) {
         if (get<atom>(a0) == get<atom>(a1))
-            return global_env->_false;
-        return global_env->_true;
+            return sexprs();
+        return atom(symbol("t"));
     }
 
     sexpr prfn(const sexprs& args) {
@@ -759,7 +782,7 @@ namespace {
             throw std::runtime_error("file not found");
 
         repl(f, false, false);
-        return global_env->_false;
+        return sexprs();
     }
 
     sexpr cosfn(const sexpr& v) { return atom(cos(get<double>(get<atom>(v)))); }
@@ -784,7 +807,7 @@ void repl(std::istream& in, bool prompt, bool out) {
             sexpr exp = eval(read(tokens), global_env);
             global_env->add("_", exp);
             if (out)
-                std::cout << "_: " << to_str(exp) << std::endl;
+                std::cout << "  " << to_str(exp) << std::endl;
         }
         catch (boost::bad_get& e) {
             std::cerr << "error: type mismatch" << std::endl;
@@ -830,5 +853,9 @@ int main(int argc, char* argv[]) {
         .add("asin", make_lambda(asinfn))
         .add("atan", make_lambda(atanfn))
         ;
+    if (argc > 1) {
+        std::istringstream s(argv[1]);
+        repl(s, false, false);
+    }
     repl(std::cin, true, true);
 }
