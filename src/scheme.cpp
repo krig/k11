@@ -256,10 +256,12 @@ sexpr parse(token_stream& s) {
 struct procedure {
     procedure(const sexprs& vars, const sexpr& exp, const envptr& parent)
         : _vars(vars), _exp(exp), _parent(parent), _variadic(false) {
-        const symbol* sym;
-        if ((sym = get<symbol>(&get<atom>(vars.back()))) && (*sym == "...")) {
-            _variadic = true;
-            _vars.pop_back();
+        if (vars.size() > 1) {
+            const symbol* sym;
+            if ((sym = get<symbol>(&get<atom>(vars.back()))) && (*sym == "...")) {
+                _variadic = true;
+                _vars.pop_back();
+            }
         }
     }
     void variadic(sexprs& exps) const {
