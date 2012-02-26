@@ -145,9 +145,6 @@ public:
     }
 
     string operator()(const sexprs& v) const {
-        if (v.size() == 0)
-            return "nil";
-
         stringstream ss;
         ss << "("
            << util::mapjoin(" ", v.begin(), v.end(), [](const sexpr& x) {
@@ -395,8 +392,9 @@ sexpr expand(sexpr x, bool toplevel) {
     if (get<sexprs>(&x) == nullptr)
         return x; // non-lists pass through
     sexprs& xl = get<sexprs>(x);
-
-    REQUIRE(x, xl.size() > 0);
+    if (xl.size() == 0)
+        return xl;
+    //REQUIRE(x, xl.size() > 0);
 
     if (is_call_to(xl, "quote")) {
         REQUIRE(x, xl.size() == 2);
@@ -490,8 +488,13 @@ sexpr expand(sexpr x, bool toplevel) {
                 throw std::runtime_error("bad data in macro_table");
             }
         }
+        else {
+            return map_expand(xl);
+        }
     }
-    return map_expand(xl);
+    else {
+        return map_expand(xl);
+    }
 }
 
 bool is_pair(const sexpr& x) {
@@ -745,11 +748,12 @@ namespace {
 
     sexpr appendfn(const sexprs& args) {
         auto i = args.begin();
-        const auto& lst = get<sexprs>(*i++);
-        sexprs ret(lst);
-        for (; i != args.end(); ++i)
-            ret.push_back(*i);
-        return ret;
+        auto lst = get<sexprs>(*i++);
+        for (; i != args.end(); ++i) {
+            const auto& lst2 = get<sexprs>(*i);
+            lst.insert(lst.end(), lst2.begin(), lst2.end());
+        }
+        return lst;
     }
 
     sexpr listpfn(const sexpr& arg) {

@@ -8,6 +8,8 @@ namespace util
 
     template <typename It>
     std::string join(const char* joint, It begin, const It& end) {
+        if (begin == end)
+            return "";
         std::stringstream ss;
         ss << *begin;
         ++begin;
@@ -29,6 +31,8 @@ namespace util
 
     template <typename It, typename Filter>
     std::string mapjoin(const char* joint, It begin, const It& end, const Filter& filter) {
+        if (begin == end)
+            return "";
         std::stringstream ss;
         ss << filter(*begin);
         ++begin;
@@ -39,6 +43,8 @@ namespace util
 
     template <typename It, typename Pred>
     std::string join_if(const char* joint, It begin, const It& end, const Pred& pred) {
+        if (begin == end)
+            return "";
         bool f = false;
         std::stringstream ss;
         for (; begin != end; ++begin) {
