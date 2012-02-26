@@ -451,7 +451,7 @@ sexpr expand(sexpr x, bool toplevel) {
         for (auto& var : *vars)
             REQUIRE(x, get<symbol>(get<atom>(&var)));
         if (xl.size() == 3)
-            return x;
+            return make_list(xl[0], *vars, expand(xl[2]));
 
         sexprs body;
         body.push_back(atom(symbol("do")));
@@ -465,9 +465,10 @@ sexpr expand(sexpr x, bool toplevel) {
     else if (symbol* s = get<symbol>(get<atom>(&xl[0]))) {
         auto mac = macro_table.find(*s);
         if (mac != macro_table.end()) {
-            if (auto p = get<procedure_ptr>(&(mac->second))) {
-                sexprs exps(xl.begin()+1, xl.end());
 
+            sexprs exps(xl.begin()+1, xl.end());
+
+            if (auto p = get<procedure_ptr>(&(mac->second))) {
                 const auto& proc = *(*p);
                 if (proc._variadic) {
                     const size_t nargs = proc._vars.size()-1;
@@ -481,7 +482,6 @@ sexpr expand(sexpr x, bool toplevel) {
                 return expand(eval(proc._exp, env), toplevel);
             }
             else if (auto l = get<lambda>(&(mac->second))) {
-                sexprs exps(xl.begin()+1, xl.end());
                 return expand((*l)(&exps), toplevel);
             }
             else {
