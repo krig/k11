@@ -29,16 +29,11 @@
 using namespace std;
 using namespace boost;
 
-class symbol : public string {
-public:
-    symbol() : string() {
-    }
-    symbol(const char* a, const char* b) : string(a, b) {
-    }
-    explicit symbol(const char* s) : string(s) {
-    }
-    explicit symbol(const string& o) : string(o) {
-    }
+struct symbol : public string {
+    symbol() : string() {}
+    symbol(const char* a, const char* b) : string(a, b) {}
+    explicit symbol(const char* s) : string(s) {}
+    explicit symbol(const string& o) : string(o) {}
 };
 
 class procedure;
@@ -48,34 +43,16 @@ typedef shared_ptr<procedure> procedure_ptr;
 typedef make_recursive_variant<atom,
                                vector<recursive_variant_>,
                                procedure_ptr,
-                               function1<recursive_variant_,
-                                         const void*>>::type sexpr;
+                               function1<recursive_variant_, const void*>>::type sexpr;
 typedef vector<sexpr> sexprs;
-typedef function1<sexpr, const void*> lambda;
+typedef function1<sexpr, const void*> builtin;
 
-void vec_arg(sexprs& v, int a) {
-    v.push_back(atom((double)a));
-}
-
-void vec_arg(sexprs& v, double a) {
-    v.push_back(atom(a));
-}
-
-void vec_arg(sexprs& v, const symbol& a) {
-    v.push_back(atom(a));
-}
-
-void vec_arg(sexprs& v, const std::string& a) {
-    v.push_back(atom(a));
-}
-
-void vec_arg(sexprs& v, const sexpr& l) {
-   v.push_back(l);
-}
-
-void vec_arg(sexprs& v, const sexprs& l) {
-    v.push_back(l);
-}
+void vec_arg(sexprs& v, int a) { v.push_back(atom((double)a)); }
+void vec_arg(sexprs& v, double a) { v.push_back(atom(a)); }
+void vec_arg(sexprs& v, const symbol& a) { v.push_back(atom(a)); }
+void vec_arg(sexprs& v, const std::string& a) { v.push_back(atom(a)); }
+void vec_arg(sexprs& v, const sexpr& l) { v.push_back(l); }
+void vec_arg(sexprs& v, const sexprs& l) { v.push_back(l); }
 
 template <class T, typename... Ts>
 void vec_arg(sexprs& v, const T& t, const Ts&... ts) {
@@ -111,40 +88,16 @@ string escape_string(const string& s) {
     return ss.str();
 }
 
-class atom2s : public static_visitor<string>
-{
-public:
-    string operator()(const string& value) const {
-        return escape_string(value);
-    }
-
-    string operator()(const symbol& value) const {
-        return value;
-    }
-
-    string operator()(double value) const {
-        char tmp[80];
-        snprintf(tmp, sizeof(tmp), "%.6g", value);
-        return tmp;
-    }
+struct atom2s : public static_visitor<string> {
+    string operator()(const string& x) const { return escape_string(x); }
+    string operator()(const symbol& x) const { return x; }
+    string operator()(double x) const { return lexical_cast<string>(x); }
 };
 
-class sexpr2s : public static_visitor<string>
-{
-public:
-
-    string operator()(const atom& a) const {
-        return apply_visitor(atom2s(), a);
-    }
-
-    string operator()(const lambda& fn) const {
-        return "<builtin>";
-    }
-
-    string operator()(const procedure_ptr& fn) const {
-        return "<fn>";
-    }
-
+struct sexpr2s : public static_visitor<string> {
+    string operator()(const atom& a) const { return apply_visitor(atom2s(), a); }
+    string operator()(const builtin& fn) const { return "<builtin>"; }
+    string operator()(const procedure_ptr& fn) const { return "<fn>"; }
     string operator()(const sexprs& v) const {
         stringstream ss;
         ss << "("
@@ -156,13 +109,9 @@ public:
     }
 };
 
-string to_str(const sexpr& l) {
-    return apply_visitor(sexpr2s(), l);
-}
+string to_str(const sexpr& l) { return apply_visitor(sexpr2s(), l); }
 
-string to_str(const atom& a) {
-    return apply_visitor(atom2s(), a);
-}
+string to_str(const atom& a) { return apply_visitor(atom2s(), a); }
 
 struct syntax_error : public runtime_error {
     explicit syntax_error(const sexpr& sx)
@@ -215,18 +164,7 @@ sexpr read_ahead(token_stream& s, token_stream::Token token) {
     }
 }
 
-sexpr expand(sexpr x, bool toplevel = false);
-
-sexpr read(token_stream& s) {
-    return read_ahead(s, s.next());
-}
-
-sexpr parse(token_stream& s) {
-    return expand(read(s), true);
-}
-
-class environment {
-public:
+struct environment {
     environment()
         : _parent(),
           _env() {
@@ -278,38 +216,60 @@ public:
 
 typedef shared_ptr<environment> envptr;
 
-bool is_call_to(const sexprs& v, const char* s) {
-    auto a = get<atom>(&v.front());
-    if (a) {
-        auto sym = get<symbol>(a);
-        if (sym) {
-            return *sym == s;
-        }
-    }
-    return false;
-}
-
-bool truth(const sexpr& x) {
-    const sexprs* v = get<sexprs>(&x);
-    return !(v && v->size() == 0);
-}
-
 namespace {
+
+    bool is_call_to(const sexprs& v, const char* s) {
+        auto a = get<atom>(&v.front());
+        if (a) {
+            auto sym = get<symbol>(a);
+            if (sym) {
+                return *sym == s;
+            }
+        }
+        return false;
+    }
+
+    bool truth(const sexpr& x) {
+        const sexprs* v = get<sexprs>(&x);
+        return !(v && v->size() == 0);
+    }
+
     envptr global_env;
 
     map<symbol, sexpr> macro_table;
 }
 
+sexpr read(token_stream& s);
+sexpr parse(token_stream& s);
 sexpr eval(sexpr x, envptr env = global_env);
+sexpr expand(sexpr x, bool toplevel = false);
+sexpr expand_quasiquote(const sexpr& x);
 
-class procedure {
-public:
+sexpr read(token_stream& s) {
+    return read_ahead(s, s.next());
+}
+
+sexpr parse(token_stream& s) {
+    return expand(read(s), true);
+}
+
+struct procedure {
     procedure(const sexprs& vars, const sexpr& exp, const envptr& parent)
         : _vars(vars), _exp(exp), _parent(parent), _variadic(false) {
         const symbol* sym;
         if ((sym = get<symbol>(&get<atom>(vars.back()))) && (*sym == "...")) {
             _variadic = true;
             _vars.pop_back();
+        }
+    }
+    void variadic(sexprs& exps) const {
+        if (_variadic) {
+            const size_t nargs = _vars.size()-1;
+            if (exps.size() < nargs)
+                throw runtime_error("bad arity");
+            sexprs tail(exps.begin()+nargs, exps.end());
+            exps.erase(exps.begin()+nargs, exps.end());
+            exps.push_back(tail);
         }
     }
     sexprs _vars;
@@ -319,11 +279,11 @@ public:
 };
 
 template <int, typename Fn>
-struct lambda_impl_2;
+struct builtin_impl;
 
 template <typename Fn>
-struct lambda_impl_2<0, Fn> {
-    lambda_impl_2(const Fn& fn) : _fn(fn) {
+struct builtin_impl<0, Fn> {
+    builtin_impl(const Fn& fn) : _fn(fn) {
     }
     sexpr operator()(const void* arghack) {
         const sexprs& args = *(const sexprs*)(arghack);
@@ -334,8 +294,8 @@ struct lambda_impl_2<0, Fn> {
 };
 
 template <typename Fn>
-struct lambda_impl_2<1, Fn> {
-    lambda_impl_2(const Fn& fn) : _fn(fn) {
+struct builtin_impl<1, Fn> {
+    builtin_impl(const Fn& fn) : _fn(fn) {
     }
     sexpr operator()(const void* arghack) {
         const sexprs& args = *(const sexprs*)(arghack);
@@ -346,8 +306,8 @@ struct lambda_impl_2<1, Fn> {
 };
 
 template <typename Fn>
-struct lambda_impl_2<2, Fn> {
-    lambda_impl_2(const Fn& fn) : _fn(fn) {
+struct builtin_impl<2, Fn> {
+    builtin_impl(const Fn& fn) : _fn(fn) {
     }
     sexpr operator()(const void* arghack) {
         const sexprs& args = *(const sexprs*)(arghack);
@@ -362,13 +322,13 @@ sexpr make_procedure(const sexprs& vars, const sexpr& exp, const envptr& env) {
 }
 
 template <typename Fn>
-sexpr make_lambda(const Fn& fn) {
-    return lambda(lambda_impl_2<function_traits<Fn>::arity, Fn>(fn));
+sexpr make_builtin(const Fn& fn) {
+    return builtin(builtin_impl<function_traits<Fn>::arity, Fn>(fn));
 }
 
 template <typename Fn>
-sexpr make_lambda_va(const Fn& fn) {
-    return lambda([=](const void* a) {
+sexpr make_builtin_va(const Fn& fn) {
+    return builtin([=](const void* a) {
             return fn(*(const sexprs*)a);
         });
 }
@@ -379,7 +339,6 @@ sexprs map_expand(sexprs lst, bool toplevel = false) {
     return lst;
 }
 
-sexpr expand_quasiquote(const sexpr& x);
 
 sexprs cdr(const sexprs& x) {
     if (x.size() <= 1)
@@ -393,9 +352,7 @@ sexpr expand(sexpr x, bool toplevel) {
     if (get<sexprs>(&x) == nullptr)
         return x; // non-lists pass through
     sexprs& xl = get<sexprs>(x);
-    if (xl.size() == 0)
-        return xl;
-    //REQUIRE(x, xl.size() > 0);
+    REQUIRE(x, xl.size() > 0);
 
     if (is_call_to(xl, "quote")) {
         REQUIRE(x, xl.size() == 2);
@@ -420,12 +377,9 @@ sexpr expand(sexpr x, bool toplevel) {
         auto& _def = xl[0];
         auto& f = xl[1];
         auto& v = xl[2];
-        sexprs fn;
-        fn.push_back(sexpr(atom(symbol("fn"))));
-        fn.push_back(v);
+        sexprs fn = make_list(symbol("fn"), v);
         fn.insert(fn.end(), xl.begin()+3, xl.end());
-        sexpr set_ = atom(symbol(":"));
-        return expand(make_list(set_, f, fn));
+        return expand(make_list(symbol(":"), f, fn));
     }
     else if (is_call_to(xl, "defmacro")) {
         // (defmacro foo proc)
@@ -433,7 +387,7 @@ sexpr expand(sexpr x, bool toplevel) {
         REQUIRE(x, xl.size() == 3);
         auto var = get<symbol>(get<atom>(xl[1]));
         sexpr proc = eval(expand(xl[2]));
-        REQUIRE(x, get<procedure_ptr>(proc) || get<lambda>(proc));
+        REQUIRE(x, get<procedure_ptr>(proc) || get<builtin>(proc));
 
         macro_table[var] = proc;
 
@@ -454,8 +408,7 @@ sexpr expand(sexpr x, bool toplevel) {
         if (xl.size() == 3)
             return make_list(xl[0], *vars, expand(xl[2]));
 
-        sexprs body;
-        body.push_back(atom(symbol("do")));
+        sexprs body = make_list(symbol("do"));
         body.insert(body.end(), xl.begin()+2, xl.end());
         return make_list(xl[0], *vars, expand(body));
     }
@@ -471,18 +424,11 @@ sexpr expand(sexpr x, bool toplevel) {
 
             if (auto p = get<procedure_ptr>(&(mac->second))) {
                 const auto& proc = *(*p);
-                if (proc._variadic) {
-                    const size_t nargs = proc._vars.size()-1;
-                    if (exps.size() < nargs)
-                        throw runtime_error("bad arity");
-                    sexprs tail(exps.begin()+nargs, exps.end());
-                    exps.erase(exps.begin()+nargs, exps.end());
-                    exps.push_back(tail);
-                }
+                proc.variadic(exps);
                 envptr env(new environment(proc._vars, exps, proc._parent));
                 return expand(eval(proc._exp, env), toplevel);
             }
-            else if (auto l = get<lambda>(&(mac->second))) {
+            else if (auto l = get<builtin>(&(mac->second))) {
                 return expand((*l)(&exps), toplevel);
             }
             else {
@@ -517,10 +463,13 @@ sexpr expand_quasiquote(const sexpr& x) {
     else if (is_pair(xl[0]) && is_call_to(get<sexprs>(xl[0]), "unquote-splicing")) {
         auto& xl0 = get<sexprs>(xl[0]);
         REQUIRE(xl0, xl0.size() == 2);
-        return make_list(symbol("append"), xl0[1], expand_quasiquote(cdr(xl)));
+        return make_list(symbol("append"),
+                         xl0[1],
+                         expand_quasiquote(cdr(xl)));
     }
     else {
-        return make_list(symbol("cons"), expand_quasiquote(xl[0]),
+        return make_list(symbol("cons"),
+                         expand_quasiquote(xl[0]),
                          expand_quasiquote(cdr(xl)));
     }
 }
@@ -590,19 +539,12 @@ sexpr eval(sexpr x, envptr env) {
                 exps.reserve(vsz);
                 for (size_t i = 1; i < vsz; ++i)
                     exps.push_back(eval((*v)[i], env));
-                if (auto l = get<lambda>(&fn)) {
+                if (auto l = get<builtin>(&fn)) {
                     return (*l)(&exps);
                 }
                 else if (auto p = get<procedure_ptr>(&fn)) {
                     const auto& proc = *(*p);
-                    if (proc._variadic) {
-                        const size_t nargs = proc._vars.size()-1;
-                        if (exps.size() < nargs)
-                            throw runtime_error("bad arity");
-                        sexprs tail(exps.begin()+nargs, exps.end());
-                        exps.erase(exps.begin()+nargs, exps.end());
-                        exps.push_back(tail);
-                    }
+                    proc.variadic(exps);
                     x = proc._exp;
                     env = envptr(new environment(proc._vars, exps, proc._parent));
                 }
@@ -613,54 +555,30 @@ sexpr eval(sexpr x, envptr env) {
     }
 }
 
-class pratom2s : public static_visitor<string>
-{
-public:
-    string operator()(const string& value) const {
-        return value;
-    }
-
-    string operator()(const symbol& value) const {
-        return value;
-    }
-
+struct pratom2s : public static_visitor<string> {
+    string operator()(const string& value) const { return value; }
+    string operator()(const symbol& value) const { return value; }
     string operator()(double value) const {
-        char tmp[80];
-        snprintf(tmp, sizeof(tmp), "%g", value);
-        return tmp;
+        return lexical_cast<string>(value);
     }
 };
 
-class prsexpr2s : public static_visitor<string>
-{
-public:
-
+struct prsexpr2s : public static_visitor<string> {
     string operator()(const atom& a) const {
         return apply_visitor(pratom2s(), a);
     }
-
-    string operator()(const lambda& fn) const {
-        return "<builtin>";
-    }
-
-    string operator()(const procedure_ptr& fn) const {
-        return "<fn>";
-    }
+    string operator()(const builtin& fn) const { return "<builtin>"; }
+    string operator()(const procedure_ptr& fn) const { return "<fn>"; }
 
     string operator()(const sexprs& v) const {
         if (v.size() == 0)
-            return "nil";
-
+            return "()";
         stringstream ss;
-        ss << "(";
-        auto i = v.begin();
-        if (i != v.end()) {
-            ss << apply_visitor(sexpr2s(), *i++);
-        }
-        for (; i != v.end(); ++i) {
-            ss << " " << apply_visitor(sexpr2s(), *i);
-        }
-        ss << ")";
+        ss << "("
+           << util::mapjoin(" ", v.begin(), v.end(), [](const sexpr& s) {
+                   return apply_visitor(sexpr2s(), s);
+               })
+           << ")";
         return ss.str();
     }
 };
@@ -672,19 +590,16 @@ string pr_to_str(const sexpr& l) {
 void repl(istream& in, bool prompt, bool out);
 
 namespace {
-    using namespace boost;
-
     sexpr addfn(const sexprs& args) {
         double sum = 0.0;
-        for (auto i : args)
-            sum += get<double>(get<atom>(i));
+        for (auto v : args)
+            sum += get<double>(get<atom>(v));
         return atom(sum);
     }
 
     sexpr subfn(const sexprs& args) {
-        if (args.size() == 1) {
+        if (args.size() == 1)
             return atom(-get<double>(get<atom>(args.front())));
-        }
         auto i = args.begin();
         double sum = get<double>(get<atom>(*i++));
         for (; i != args.end(); ++i)
@@ -741,7 +656,6 @@ namespace {
         const auto& consing = *i++;
         const auto& lst = get<sexprs>(*i);
         sexprs ret;
-        ret.reserve(lst.size()+1);
         ret.push_back(consing);
         ret.insert(ret.end(), lst.begin(), lst.end());
         return ret;
@@ -763,9 +677,8 @@ namespace {
     }
     sexpr nullpfn(const sexpr& arg) {
         auto lst = get<sexprs>(&arg);
-        if (lst && lst->size() == 0) {
+        if (lst && lst->size() == 0)
             return atom(symbol("t"));
-        }
         return sexprs();
     }
     sexpr symbolpfn(const sexpr& arg) {
@@ -786,7 +699,7 @@ namespace {
         return sexprs();
     }
 
-    // TODO: generalize for non-numeric types
+    // TODO: generalize to non-numeric types
 
     sexpr ltfn(const sexpr& a, const sexpr& b) {
         if (get<double>(get<atom>(a)) < get<double>(get<atom>(b)))
@@ -834,11 +747,9 @@ namespace {
 
     sexpr loadfn(const sexpr& arg) {
         string fname = get<string>(get<atom>(arg));
-
         ifstream f(fname.c_str());
         if (!f.is_open())
             throw runtime_error("file not found");
-
         repl(f, false, false);
         return sexprs();
     }
@@ -881,12 +792,11 @@ namespace {
             vars.push_back(bindingslist[i]);
             vals.push_back(bindingslist[i+1]);
         }
-
-        sexprs lambda = make_list(symbol("fn"), vars);
-        sexprs lambda_body = map_expand(body);
-        lambda.insert(lambda.end(), lambda_body.begin(), lambda_body.end());
+        sexprs builtin = make_list(symbol("fn"), vars);
+        sexprs builtin_body = map_expand(body);
+        builtin.insert(builtin.end(), builtin_body.begin(), builtin_body.end());
         sexprs call;
-        call.push_back(lambda);
+        call.push_back(builtin);
         sexprs call_body = map_expand(vals);
         call.insert(call.end(), call_body.begin(), call_body.end());
         return call;
@@ -914,7 +824,7 @@ namespace {
         try {
             auto proc = get<procedure_ptr>(args[0]);
             envptr env(new environment(proc->_vars,
-                                       make_list(make_lambda_va(bind(throwfn, depth, _1))),
+                                       make_list(make_builtin_va(bind(throwfn, depth, _1))),
                                        proc->_parent));
             return eval(proc->_exp, env);
         }
@@ -956,42 +866,42 @@ void repl(istream& in, bool prompt, bool out) {
 }
 
 int main(int argc, char* argv[]) {
-    macro_table[symbol("let")] = make_lambda_va(letfn);
+    macro_table[symbol("let")] = make_builtin_va(letfn);
 
     global_env = envptr(new environment);
 
     global_env->
-         add("+", make_lambda_va(addfn))
-        .add("-", make_lambda_va(subfn))
-        .add("*", make_lambda_va(mulfn))
-        .add("/", make_lambda_va(divfn))
-        .add("not", make_lambda(notfn))
-        .add("<", make_lambda(ltfn))
-        .add(">", make_lambda(gtfn))
-        .add("<=", make_lambda(lteqfn))
-        .add(">=", make_lambda(gteqfn))
-        .add("==", make_lambda(eqfn))
-        .add("!=", make_lambda(neqfn))
-        .add("len", make_lambda(lenfn))
-        .add("cons", make_lambda_va(consfn))
-        .add("car", make_lambda(carfn))
-        .add("cdr", make_lambda(cdrfn))
-        .add("append", make_lambda_va(appendfn))
-        .add("list", make_lambda_va(listfn))
-        .add("list?", make_lambda(listpfn))
-        .add("null?", make_lambda(nullpfn))
-        .add("symbol?", make_lambda(symbolpfn))
-        .add("defvar", make_lambda(defvarfn))
-        .add("print-globals", make_lambda(envfn))
-        .add("pr", make_lambda_va(prfn))
-        .add("load", make_lambda(loadfn))
-        .add("sin", make_lambda(sinfn))
-        .add("cos", make_lambda(cosfn))
-        .add("tan", make_lambda(tanfn))
-        .add("acos", make_lambda(acosfn))
-        .add("asin", make_lambda(asinfn))
-        .add("atan", make_lambda(atanfn))
-        .add("call/cc", make_lambda_va(callccfn))
+         add("+", make_builtin_va(addfn))
+        .add("-", make_builtin_va(subfn))
+        .add("*", make_builtin_va(mulfn))
+        .add("/", make_builtin_va(divfn))
+        .add("not", make_builtin(notfn))
+        .add("<", make_builtin(ltfn))
+        .add(">", make_builtin(gtfn))
+        .add("<=", make_builtin(lteqfn))
+        .add(">=", make_builtin(gteqfn))
+        .add("==", make_builtin(eqfn))
+        .add("!=", make_builtin(neqfn))
+        .add("len", make_builtin(lenfn))
+        .add("cons", make_builtin_va(consfn))
+        .add("car", make_builtin(carfn))
+        .add("cdr", make_builtin(cdrfn))
+        .add("append", make_builtin_va(appendfn))
+        .add("list", make_builtin_va(listfn))
+        .add("list?", make_builtin(listpfn))
+        .add("null?", make_builtin(nullpfn))
+        .add("symbol?", make_builtin(symbolpfn))
+        .add("defvar", make_builtin(defvarfn))
+        .add("print-globals", make_builtin(envfn))
+        .add("pr", make_builtin_va(prfn))
+        .add("load", make_builtin(loadfn))
+        .add("sin", make_builtin(sinfn))
+        .add("cos", make_builtin(cosfn))
+        .add("tan", make_builtin(tanfn))
+        .add("acos", make_builtin(acosfn))
+        .add("asin", make_builtin(asinfn))
+        .add("atan", make_builtin(atanfn))
+        .add("call/cc", make_builtin_va(callccfn))
         ;
     if (argc > 1) {
         istringstream s(argv[1]);
