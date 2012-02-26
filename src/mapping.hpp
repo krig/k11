@@ -1,5 +1,7 @@
 #pragma once
 
+#include <iterator>
+
 // provides iteration adapters for map types
 // whose iterators return std::pair<key, value>
 // to allow direct iteration of keys and values
@@ -9,7 +11,7 @@ namespace mapping
     inline namespace internal {
     template <typename M, typename I, int Index>
     struct const_mapdapter {
-        struct iterator {
+        struct iterator : public std::iterator<std::forward_iterator_tag, I> {
             typename M::const_iterator _i;
             iterator() {}
             iterator(const iterator& i) : _i(i._i) {}
@@ -37,7 +39,7 @@ namespace mapping
     };
     template <typename M, typename I, int Index>
     struct mapdapter {
-        struct iterator {
+        struct iterator : public std::iterator<std::forward_iterator_tag, I> {
             typename M::iterator _i;
             iterator() {}
             iterator(const iterator& i) : _i(i._i) {}
