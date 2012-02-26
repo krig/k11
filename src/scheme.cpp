@@ -352,7 +352,8 @@ sexpr expand(sexpr x, bool toplevel) {
     if (get<sexprs>(&x) == nullptr)
         return x; // non-lists pass through
     sexprs& xl = get<sexprs>(x);
-    REQUIRE(x, xl.size() > 0);
+    if (xl.size() == 0)
+        return xl;
 
     if (is_call_to(xl, "quote")) {
         REQUIRE(x, xl.size() == 2);
@@ -851,7 +852,7 @@ void repl(istream& in, bool prompt, bool out) {
             sexpr exp = eval(parse(tokens), global_env);
             global_env->add("_", exp);
             if (out)
-                cout << "  " << to_str(exp) << endl;
+                cout << to_str(exp) << endl;
         }
         catch (bad_get& e) {
             cerr << "type mismatch: " << diagnostic_information(e) << endl;
