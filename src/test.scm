@@ -55,3 +55,13 @@
          (if (== value (car lst))
              lst
              (member value (cdr lst)))))
+
+(def range-rec (n lst)
+     (if (== n 0)
+         lst
+         (range-rec (- n 1) (cons n lst))))
+
+(def range (n)
+     (range-rec n '()))
+
+

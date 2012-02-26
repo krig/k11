@@ -33,7 +33,7 @@ struct symbol : public string {
     symbol() : string() {}
     symbol(const char* a, const char* b) : string(a, b) {}
     explicit symbol(const char* s) : string(s) {}
-    explicit symbol(const string& o) : string(o) {}
+    explicit symbol(string&& o) : string(o) {}
 };
 
 class procedure;
@@ -150,12 +150,12 @@ sexpr read_ahead(token_stream& s, token_stream::Token token) {
     case token_stream::Unquote:
     case token_stream::UnquoteSplicing: {
         sexprs v;
-        v.push_back(atom(symbol(s.text)));
+        v.push_back(atom(symbol(boost::move(s.text))));
         v.push_back(read(s));
         return v;
     }
     case token_stream::Symbol:
-        return atom(symbol(s.text));
+        return atom(symbol(boost::move(s.text)));
     case token_stream::Number:
         return atom(lexical_cast<double>(s.text));
     default:
@@ -659,6 +659,7 @@ namespace {
         const auto& consing = *i++;
         const auto& lst = get<sexprs>(*i);
         sexprs ret;
+        ret.reserve(lst.size()+1);
         ret.push_back(consing);
         ret.insert(ret.end(), lst.begin(), lst.end());
         return ret;
