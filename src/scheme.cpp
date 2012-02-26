@@ -14,6 +14,7 @@
 #include <boost/type_traits.hpp>
 #include <boost/unordered_map.hpp>
 #include <boost/exception/diagnostic_information.hpp>
+#include <boost/bind.hpp>
 #include <vector>
 #include <string>
 #include <sstream>
@@ -891,6 +892,40 @@ namespace {
         return call;
     }
 
+    struct call_continuation : public std::exception {
+        explicit call_continuation(int depth, const sexpr& exp)
+            : std::exception(), _depth(depth), _exp(exp) {
+        }
+        virtual ~call_continuation() {}
+        int _depth;
+        sexpr _exp;
+    };
+
+    sexpr throwfn(int depth, const sexprs& args) {
+        throw call_continuation(depth, args.front());
+    }
+
+    sexpr callccfn(const sexprs& args) {
+        // arg[0] is procedure
+        // call proc with current continuation
+        // (escape only)
+        static int depth = 0;
+        int mydepth = ++depth;
+        try {
+            auto proc = get<procedure_ptr>(args[0]);
+            envptr env(new environment(proc->_vars,
+                                       make_list(make_lambda_va(bind(throwfn, depth, _1))),
+                                       proc->_parent));
+            return eval(proc->_exp, env);
+        }
+        catch (call_continuation& cc) {
+            if (cc._depth < mydepth)
+                throw;
+            depth = 0;
+            return cc._exp;
+        }
+    }
+
 }
 
 
@@ -922,7 +957,7 @@ void repl(istream& in, bool prompt, bool out) {
 
 int main(int argc, char* argv[]) {
     macro_table[symbol("let")] = make_lambda_va(letfn);
-    
+
     global_env = envptr(new environment);
 
     global_env->
@@ -956,6 +991,7 @@ int main(int argc, char* argv[]) {
         .add("acos", make_lambda(acosfn))
         .add("asin", make_lambda(asinfn))
         .add("atan", make_lambda(atanfn))
+        .add("call/cc", make_lambda_va(callccfn))
         ;
     if (argc > 1) {
         istringstream s(argv[1]);
