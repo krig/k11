@@ -29,3 +29,5 @@ INCLUDE += -isystem /opt/include -Isrc
 :program bin/looping : src/tests/looping.cpp
 :program bin/iter : src/tests/iter.cpp
 :program bin/join : src/tests/join.cpp
+:program bin/iptr : src/tests/iptr.cpp
+:program bin/sexpr : src/tests/sexpr.cpp
