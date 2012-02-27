@@ -206,12 +206,24 @@ struct cell {
         if (typa != String) {
             destroycar();
             typa = String;
-            new (&a.s) std::string(s);
+            new (&a.s) std::string(std::move(s));
         }
         else {
-            a.s = s;
+            a.s = std::move(s);
         }
     }
+
+    void car(value_ptr&& v) {
+        if (typa != Value) {
+            destroycar();
+            typa = Value;
+            new (&a.v) value_ptr(std::move(v));
+        }
+        else {
+            b.v = std::move(v);
+        }
+    }
+
 
     void car(cell* c) {
         if (typa != Cell) {
@@ -256,10 +268,21 @@ struct cell {
         if (typb != String) {
             destroycdr();
             typb = String;
-            new (&b.s) std::string(s);
+            new (&b.s) std::string(std::move(s));
         }
         else {
-            b.s = s;
+            b.s = std::move(s);
+        }
+    }
+
+    void cdr(value_ptr&& v) {
+        if (typb != Value) {
+            destroycdr();
+            typb = Value;
+            new (&b.v) value_ptr(std::move(v));
+        }
+        else {
+            b.v = std::move(v);
         }
     }
 
@@ -528,8 +551,13 @@ struct proc_value : public value_impl {
 };
 
 struct file_value : public value_impl {
-    file_value() : value_impl("file"), _file(0) {}
-    virtual ~file_value() { if (_file) fclose(_file); }
+    file_value() : value_impl("file"), _file(0) {
+        std::cerr << "creating file value" << std::endl;
+    }
+    virtual ~file_value() {
+        std::cerr << "destroying file value" << std::endl;
+        if (_file) fclose(_file);
+    }
     FILE* _file;
 };
 
@@ -562,7 +590,7 @@ int main() {
     c->cdr(c+1);
     (c+1)->car("world");
     (c+1)->nil_cdr();
-    (c+2)->car(3.0);
+    (c+2)->car(value_ptr(new file_value));
     (c+2)->nil_cdr();
 
     cellGC.addroot(a);
