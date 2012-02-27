@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cassert>
 #include <stdexcept>
+#include <iostream>
 #include "intrusive_ptr.hpp"
 
 struct value {
@@ -54,32 +55,8 @@ struct cell {
         *this = c;
     }
 
-    cell(cell&& c) {
-        switch (c.typa) {
-        case Int: a.i = c.a.i; break;
-        case Float: a.f = c.a.f; break;
-        case Double: a.d = c.a.d; break;
-        case Cell: a.c = c.a.c; break;
-        case Value: a.v = std::move(c.a.v); break;
-        case String: a.s = std::move(c.a.s); break;
-        case Nil: break;
-        }
-        switch (c.typb) {
-        case Int: b.i = c.b.i; break;
-        case Float: b.f = c.b.f; break;
-        case Double: b.d = c.b.d; break;
-        case Cell: b.c = c.b.c; break;
-        case Value: b.v = std::move(c.b.v); break;
-        case String: b.s = std::move(c.b.s); break;
-        case Nil: break;
-        }
-        flags = c.flags;
-        typa = c.typa;
-        typb = c.typb;
-        // clear the other cell
-        c.flags = 0;
-        c.typa = Nil;
-        c.typb = Nil;
+    cell(cell&& c) : flags(0), typa(Nil), typb(Nil) {
+        *this = std::move(c);
     }
 
     cell& operator=(const cell& c) {
@@ -144,8 +121,8 @@ struct cell {
             case Float: a.f = c.a.f; break;
             case Double: a.d = c.a.d; break;
             case Cell: a.c = c.a.c; break;
-            case Value: a.v = std::move(c.a.v); break;
-            case String: a.s = std::move(c.a.s); break;
+	        case Value: new (&a.v) value_ptr(std::move(c.a.v)); break;
+	        case String: new (&a.s) std::string(std::move(c.a.s)); break;
             case Nil: break;
             }
             switch (c.typb) {
@@ -153,8 +130,8 @@ struct cell {
 	        case Float: b.f = c.b.f; break;
 	        case Double: b.d = c.b.d; break;
 	        case Cell: b.c = c.b.c; break;
-	        case Value: b.v = std::move(c.b.v); break;
-	        case String: b.s = std::move(c.b.s); break;
+	        case Value: new (&b.v) value_ptr(std::move(c.b.v)); break;
+	        case String: new (&b.s) std::string(std::move(c.b.s)); break;
 	        case Nil: break;
             }
             flags = c.flags;
@@ -404,6 +381,7 @@ gcimpl::~gcimpl() {
 }
 void gcimpl::collect() { // collect young gen
     // TODO: if oldgen is reaching limit, collect old gen
+    std::cerr << "+gc: " << _young[0].size() << " " << _young[1].size() << " " << _old.size() << std::endl;
 
     // mark live cells in young heap
     std::for_each(_roots.begin(), _roots.end(), [=](cell* root) {
@@ -452,7 +430,7 @@ void gcimpl::collect() { // collect young gen
 
     // pointer fixup in _young[live]
     auto ptrs_e = _ptrs.end();
-    std::for_each(_young[live].begin(), _young[dead].end(), [&](cell& c) {
+    std::for_each(_young[live].begin(), _young[live].end(), [&](cell& c) {
             if (c.typa == cell::Cell) {
                 auto it = _ptrs.find(c.a.c);
                 if (it != ptrs_e)
@@ -491,6 +469,8 @@ void gcimpl::collect() { // collect young gen
 
     // switch heaps
     _current = live;
+
+    std::cerr << "-gc: " << _young[0].size() << " " << _young[1].size() << " " << _old.size() << std::endl;
 }
 
 void gcimpl::mark_young(cell* c) {
@@ -581,7 +561,7 @@ int main() {
     c->car(a);
     c->cdr(c+1);
     (c+1)->car("world");
-    (c+1)->cdr(c+2);
+    (c+1)->nil_cdr();
     (c+2)->car(3.0);
     (c+2)->nil_cdr();
 
@@ -590,4 +570,8 @@ int main() {
     cellGC.addroot(c);
 
     cellGC.collect();
+
+    cellGC.rmroot(a);
+    cellGC.rmroot(b);
+    cellGC.rmroot(c);
 }

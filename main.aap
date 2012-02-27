@@ -2,7 +2,7 @@
 
 #:toolsearch gcc
 
-OPTIMIZE = 1
+OPTIMIZE = 0
 DEBUG = yes
 STRIP =
 
