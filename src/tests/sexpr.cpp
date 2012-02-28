@@ -427,8 +427,8 @@ struct cellgc {
     cellgc();
     ~cellgc();
     void collect(); // mark & sweep
-    void addroot(cell* c);
-    void rmroot(cell* c);
+    void addroot(cell** c);
+    void rmroot(cell** c);
     cell* alloc(size_t len = 1);
 
     gcimpl* _impl;
@@ -438,8 +438,8 @@ struct gcimpl {
     gcimpl();
     ~gcimpl();
     void collect(); // younggen collection
-    void addroot(cell* c);
-    void rmroot(cell* c);
+    void addroot(cell** c);
+    void rmroot(cell** c);
     cell* alloc(size_t len);
 
 private:
@@ -452,7 +452,7 @@ private:
     void stop_the_world();
     void start_the_world();
 
-    std::unordered_set<cell*> _roots;
+    std::unordered_set<cell**> _roots;
     std::vector<cell> _young[2];
     std::vector<cell> _old;
     std::unordered_map<cell*, cell*> _ptrs; // used while collecting
@@ -465,8 +465,8 @@ cellgc::~cellgc() {
     delete _impl;
 }
 void cellgc::collect() { _impl->collect(); } // mark & sweep
-void cellgc::addroot(cell* c) { _impl->addroot(c); }
-void cellgc::rmroot(cell* c) { _impl->rmroot(c); }
+void cellgc::addroot(cell** c) { _impl->addroot(c); }
+void cellgc::rmroot(cell** c) { _impl->rmroot(c); }
 cell* cellgc::alloc(size_t len) { return _impl->alloc(len); }
 
 gcimpl::gcimpl() : _roots() {
@@ -485,8 +485,8 @@ void gcimpl::collect() { // collect young gen
     std::cerr << "+gc: " << _young[0].size() << " " << _young[1].size() << " " << _old.size() << std::endl;
 
     // mark live cells
-    std::for_each(_roots.begin(), _roots.end(), [=](cell* root) {
-            this->mark(root);
+    std::for_each(_roots.begin(), _roots.end(), [=](cell** root) {
+            this->mark(*root);
         });
 
     _ptrs.clear();
@@ -536,8 +536,16 @@ void gcimpl::collect() { // collect young gen
             }
         });
 
-    // pointer fixup in _young[live]
     auto ptrs_e = _ptrs.end();
+
+    // pointer fixup and unmark in roots
+    std::for_each(_roots.begin(), _roots.end(), [&](cell** cpp) {
+            auto it = _ptrs.find(*cpp);
+            if (it != ptrs_e)
+                *cpp = it->second;
+        });
+
+    // pointer fixup in _young[live]
     std::for_each(_young[live].begin(), _young[live].end(), [&](cell& c) {
             if (c.typa == cell::Cell) {
                 auto it = _ptrs.find(c.a.c);
@@ -630,10 +638,10 @@ void gcimpl::mark(cell* c) {
             break;
     }
 }
-void gcimpl::addroot(cell* c) {
+void gcimpl::addroot(cell** c) {
     _roots.insert(c);
 }
-void gcimpl::rmroot(cell* c) {
+void gcimpl::rmroot(cell** c) {
     _roots.erase(c);
 }
 cell* gcimpl::alloc(size_t len) {
@@ -665,8 +673,8 @@ void gcimpl::expand_heap() {
 
 template <typename Fn, int Nslots>
 struct proc_value : public value_impl {
-    proc_value() : value_impl("proc") { cellGC.addroot(expr); /* add env cell references as roots */ }
-    ~proc_value() { cellGC.rmroot(expr); }
+    proc_value() : value_impl("proc") { cellGC.addroot(&expr); /* add env cell references as roots */ }
+    ~proc_value() { cellGC.rmroot(&expr); }
     value* _parent;
     cell* expr;
     cell::slot env[Nslots];
@@ -759,15 +767,15 @@ int main() {
 
     // TODO: fix!
     // have to pass pointers to the roots so we can fix them up ofc...
-    cellGC.addroot(a);
-    cellGC.addroot(b);
-    cellGC.addroot(c);
+    cellGC.addroot(&a);
+    cellGC.addroot(&b);
+    cellGC.addroot(&c);
 
     cellGC.collect();
 
     print(std::cout, a) << "\n";
 
-    cellGC.rmroot(a);
-    cellGC.rmroot(b);
-    cellGC.rmroot(c);
+    cellGC.rmroot(&a);
+    cellGC.rmroot(&b);
+    cellGC.rmroot(&c);
 }
