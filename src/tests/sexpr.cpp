@@ -780,7 +780,12 @@ int main() {
     print(std::cout, a) << "\n";
     print(std::cout, (c+2)) << "\n";
 
-    print(std::cout, alloc_list(20)) << "\n";
+    cell* lst = alloc_list(20);
+    cell* i = lst;
+    for (; !i->cdr_is_nil(); ++i)
+        i->car(rand());
+    i->car(rand());
+    print(std::cout, lst) << "\n";
 
     // TODO: fix!
     // have to pass pointers to the roots so we can fix them up ofc...
