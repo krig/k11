@@ -624,7 +624,9 @@ void gcimpl::oldgen_collect() {
     // remove the dead cells from the heap
     _old.erase(_old.end()-swaps, _old.end());
 
-    // pointer fixup
+    // todo: if necessary, grow the heap
+    // growing the heap will require major
+    // pointer fixup...
 }
 
 void gcimpl::mark(cell* c) {
