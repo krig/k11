@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <string>
+#include <set>
 #include <unordered_set>
 #include <unordered_map>
 #include <algorithm>
@@ -26,11 +27,11 @@ typedef util::intrusive_ptr<value> value_ptr;
 struct nil_cell {};
 
 struct symbol {
-    typedef std::unordered_set<std::string> table_type;
+    typedef std::set<std::string> table_type;
     static table_type table;
 
     explicit symbol(const char* s) {
-        i = table.emplace(s).first;
+        i = table.insert(s).first;
     }
 
     const char* c_str() const {
@@ -537,6 +538,11 @@ void gcimpl::collect() { // collect young gen
         });
 
     auto ptrs_e = _ptrs.end();
+
+    // pointer fixup can be done asynchronously and simultaneously
+    // across the three locations (roots, young, old)
+    // adding it is (semi)trivial: spin off each for_each in an std::async()
+    // and catch the futures below
 
     // pointer fixup and unmark in roots
     std::for_each(_roots.begin(), _roots.end(), [&](cell** cpp) {
