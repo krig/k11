@@ -58,7 +58,9 @@ token_stream::Token token_stream::next() {
 }
 
 void token_stream::fill_text(int ch) {
-    while (!isspace(ch) && ch != ')') {
+    while (!isspace(ch) && ch != ')' &&
+           ch != '}' &&
+           ch != ']') {
         text += (char)ch;
         ch = _src.get();
     }
