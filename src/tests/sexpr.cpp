@@ -708,6 +708,19 @@ struct value_mgr {
 };
 */
 
+cell* alloc_list(size_t len) {
+    cell* c = cellGC.alloc(len);
+    cell* p = c;
+    --len;
+    while (len) {
+        p->cdr(p+1);
+        p = p+1;
+        --len;
+    }
+    p->nil_cdr();
+    return c;
+}
+
 #include <iostream>
 
 std::ostream& print(std::ostream& s, cell* c) {
@@ -766,6 +779,8 @@ int main() {
 
     print(std::cout, a) << "\n";
     print(std::cout, (c+2)) << "\n";
+
+    print(std::cout, alloc_list(20)) << "\n";
 
     // TODO: fix!
     // have to pass pointers to the roots so we can fix them up ofc...
