@@ -8,11 +8,12 @@
 #include <algorithm>
 #include <cassert>
 #include <stdexcept>
+#include <iostream>
 
 struct gcimpl {
     gcimpl();
     ~gcimpl();
-    void collect(); // younggen collection
+    void collect();
     void addroot(cell** c);
     void rmroot(cell** c);
     cell* alloc(size_t len);
@@ -31,20 +32,36 @@ private:
     std::unordered_set<cell**> _roots;
     std::vector<cell> _young[2];
     std::vector<cell> _old;
-    std::unordered_map<cell*, cell*> _ptrs; // used while collecting
+    std::unordered_map<cell*, cell*> _ptrs;
     int _current;
 };
 
 cellgc::cellgc() : _impl(new gcimpl) {
 }
+
 cellgc::~cellgc() {
     delete _impl;
 }
-void cellgc::collect() { _impl->collect(); } // mark & sweep
-void cellgc::addroot(cell** c) { _impl->addroot(c); }
-void cellgc::rmroot(cell** c) { _impl->rmroot(c); }
-cell* cellgc::alloc(size_t len) { return _impl->alloc(len); }
-cell* cellgc::alloc_list(size_t len) { return _impl->alloc_list(len); }
+
+void cellgc::collect() {
+    _impl->collect();
+}
+
+void cellgc::addroot(cell** c) {
+    _impl->addroot(c);
+}
+
+void cellgc::rmroot(cell** c) {
+    _impl->rmroot(c);
+}
+
+cell* cellgc::alloc(size_t len) {
+    return _impl->alloc(len);
+}
+
+cell* cellgc::alloc_list(size_t len) {
+    return _impl->alloc_list(len);
+}
 
 gcimpl::gcimpl() : _roots() {
     const int YoungSize = 10*1024;
@@ -54,12 +71,33 @@ gcimpl::gcimpl() : _roots() {
     _old.reserve(OldSize); // ~1MB
     _current = 0;
 }
+
 gcimpl::~gcimpl() {
     collect();
 }
-void gcimpl::collect() { // collect young gen
+
+namespace {
+    inline bool marked(const cell& c) {
+        return c.flags & cell::GcMark;
+    }
+
+    inline void inc_survivor(cell& c) {
+        if (c.flags & cell::GcSurvivor1) {
+            c.flags = (c.flags & ~cell::GcSurvivor1) | cell::GcSurvivor2;
+        }
+        else if (c.flags & cell::GcSurvivor2) {
+            c.flags |= cell::GcOld;
+        }
+        else {
+            c.flags |= cell::GcSurvivor1;
+        }
+    }
+}
+
+void gcimpl::collect() {
     const size_t OldLimit = 4*9*1024;
-    //std::cerr << "gc: young(" << _young[0].size() << "/" << _young[1].size() << "), old(" << _old.size() << ")\n";
+
+    std::cerr << "gc: young(" << _young[0].size() << "/" << _young[1].size() << "), old(" << _old.size() << ")\n";
 
     // mark live cells
     std::for_each(_roots.begin(), _roots.end(), [=](cell** root) {
@@ -90,17 +128,10 @@ void gcimpl::collect() { // collect young gen
     // will implement later.
     size_t oldend = _old.size();
     std::for_each(_young[dead].begin(), _young[dead].end(), [&](cell& c) {
-            if (c.flags & cell::GcMark) {
+            if (marked(c)) {
                 c.flags &= ~cell::GcMark;
-                if (c.flags & cell::GcSurvivor1) {
-                    c.flags = (c.flags & ~cell::GcSurvivor1) | cell::GcSurvivor2;
-                }
-                else if (c.flags & cell::GcSurvivor2) {
-                    c.flags |= cell::GcOld;
-                }
-                else {
-                    c.flags |= cell::GcSurvivor1;
-                }
+
+                inc_survivor(c);
                 if (!(c.flags & cell::GcOld)) {
                     _young[live].emplace_back(std::move(c));
                     _ptrs.emplace(&c, &_young[live].back());
@@ -109,7 +140,6 @@ void gcimpl::collect() { // collect young gen
                     _old.emplace_back(std::move(c));
                     _ptrs.emplace(&c, &_old.back());
                 }
-                // what has happened to the old cell?
             }
         });
 
@@ -169,13 +199,7 @@ void gcimpl::collect() { // collect young gen
     // switch heaps
     _current = live;
 
-    //std::cerr << "gc: -> young(" << _young[0].size() << "/" << _young[1].size() << "), old(" << _old.size() << ")" << std::endl;
-}
-
-namespace {
-    inline bool marked(const cell& c) {
-        return c.flags & cell::GcMark;
-    }
+    std::cerr << "gc: -> young(" << _young[0].size() << "/" << _young[1].size() << "), old(" << _old.size() << ")" << std::endl;
 }
 
 void gcimpl::oldgen_collect() {
@@ -191,19 +215,10 @@ void gcimpl::oldgen_collect() {
         if (bottom == top)
             break;
 
-        // top is now pointing to a live cell at the top of the heap
-        // bottom is pointing to a dead cell at the bottom of the heap
-        // swap them
         _ptrs.emplace(&(*top), &(*bottom));
         std::swap(*bottom, *top);
         ++swaps;
-        // top = dead cell at top of heap
-        // bottom = live cell at bottom of heap
-        // go on then..
-        // could check for time here and only
-        // keep swapping for a certain time...
     }
-    // remove the dead cells from the heap
     _old.erase(_old.end()-swaps, _old.end());
 
     // todo: if necessary, grow the heap
@@ -222,12 +237,15 @@ void gcimpl::mark(cell* c) {
             break;
     }
 }
+
 void gcimpl::addroot(cell** c) {
     _roots.insert(c);
 }
+
 void gcimpl::rmroot(cell** c) {
     _roots.erase(c);
 }
+
 cell* gcimpl::alloc(size_t len) {
     assert(len > 0 && len < _young[_current].capacity());
     if (_young[_current].capacity() < _young[_current].size() + len)
@@ -252,11 +270,11 @@ cell* gcimpl::alloc_list(size_t len) {
 
 
 void gcimpl::stop_the_world() {
-    // todo
+    // todo: threading
 }
 
 void gcimpl::start_the_world() {
-    // todo
+    // todo: threading
 }
 
 void gcimpl::expand_heap() {
@@ -265,5 +283,5 @@ void gcimpl::expand_heap() {
     // resize heap
     // get new base address and bounds of heap
     // run through heap and roots and adjust all pointers (pointers that go outside of old heap are not changed)
-    throw std::runtime_error("out of cell space");
+    throw std::runtime_error("heap exhausted");
 }
