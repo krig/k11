@@ -31,7 +31,7 @@ struct symbol {
     static table_type table;
 
     explicit symbol(const char* s) {
-        i = table.insert(s).first;
+        i = table.insert(std::move(std::string(s))).first;
     }
 
     const char* c_str() const {
@@ -483,7 +483,7 @@ gcimpl::~gcimpl() {
 }
 void gcimpl::collect() { // collect young gen
     const size_t OldLimit = 4*9*1024;
-    std::cerr << "+gc: " << _young[0].size() << " " << _young[1].size() << " " << _old.size() << std::endl;
+    std::cerr << "gc: young(" << _young[0].size() << "/" << _young[1].size() << "), old(" << _old.size() << ")\n";
 
     // mark live cells
     std::for_each(_roots.begin(), _roots.end(), [=](cell** root) {
@@ -593,7 +593,7 @@ void gcimpl::collect() { // collect young gen
     // switch heaps
     _current = live;
 
-    std::cerr << "-gc: " << _young[0].size() << " " << _young[1].size() << " " << _old.size() << std::endl;
+    std::cerr << "gc: -> young(" << _young[0].size() << "/" << _young[1].size() << "), old(" << _old.size() << ")" << std::endl;
 }
 
 namespace {
@@ -770,6 +770,10 @@ int main() {
     cell* b = cellGC.alloc(2);
     cell* c = cellGC.alloc(3);
 
+    cellGC.addroot(&a);
+    cellGC.addroot(&b);
+    cellGC.addroot(&c);
+
     a->car(symbol("hello"));
     a->cdr(b);
     b->car(1);
@@ -786,20 +790,13 @@ int main() {
     print(std::cout, a) << "\n";
     print(std::cout, (c+2)) << "\n";
 
-    cell* lst = alloc_list(20);
-    cell* i = lst;
-    for (; !i->cdr_is_nil(); ++i)
-        i->car(rand());
-    i->car(rand());
-    print(std::cout, lst) << "\n";
-
-    // TODO: fix!
-    // have to pass pointers to the roots so we can fix them up ofc...
-    cellGC.addroot(&a);
-    cellGC.addroot(&b);
-    cellGC.addroot(&c);
-
-    cellGC.collect();
+    for (int i = 0; i < 2000; ++i) {
+        cell* lst = alloc_list(20);
+        cell* k = lst;
+        for (; !k->cdr_is_nil(); ++k)
+            k->car(rand()%(i+1));
+        k->car(i);
+    }
 
     print(std::cout, a) << "\n";
 
