@@ -17,5 +17,3 @@ struct cellgc {
 
     gcimpl* _impl;
 };
-
-extern cellgc cellGC;

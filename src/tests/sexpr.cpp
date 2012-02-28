@@ -9,6 +9,10 @@
 #include "cell.hpp"
 #include "cellgc.hpp"
 
+namespace {
+    cellgc cellGC;
+}
+
 struct value_impl : public value {
     virtual ~value_impl() {}
     virtual const char* name() const { return _name; }

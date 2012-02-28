@@ -9,8 +9,6 @@
 #include <cassert>
 #include <stdexcept>
 
-cellgc cellGC;
-
 struct gcimpl {
     gcimpl();
     ~gcimpl();
@@ -240,7 +238,7 @@ cell* gcimpl::alloc(size_t len) {
 }
 
 cell* gcimpl::alloc_list(size_t len) {
-    cell* c = cellGC.alloc(len);
+    cell* c = alloc(len);
     cell* p = c;
     --len;
     while (len) {
