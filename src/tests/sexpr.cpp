@@ -23,11 +23,33 @@ inline void decref(value* v) { v->decref(); }
 
 typedef util::intrusive_ptr<value> value_ptr;
 
-// cells are GC:d so use naked pointers
-
 struct nil_cell {};
 
-struct symbol { const char* sym; };
+struct symbol {
+    typedef std::unordered_set<std::string> table_type;
+    static table_type table;
+
+    explicit symbol(const char* s) {
+        i = table.emplace(s).first;
+    }
+
+    const char* c_str() const {
+        return i->c_str();
+    }
+
+    bool operator==(const symbol& s) const {
+        return i == s.i;
+    }
+
+    bool operator!=(const symbol& s) const {
+        return i != s.i;
+    }
+
+private:
+    table_type::iterator i;
+};
+
+symbol::table_type symbol::table;
 
 struct cell {
     // mark = in gc, survivor1 = survived 1 younggen collection
@@ -327,11 +349,11 @@ struct cell {
         }
     }
 
-    bool is_nil_car() const {
+    bool car_is_nil() const {
         return typa == Nil;
     }
 
-    bool is_nil_cdr() const {
+    bool cdr_is_nil() const {
         return typb == Nil;
     }
 
@@ -342,25 +364,42 @@ struct cell {
     uint8_t typb;
 };
 
-template <typename T>
-const T* car(const cell& c);
-template <typename T>
-const T* cdr(const cell& c);
+template <typename T> const T* car(const cell* c);
+template <typename T> const T* cdr(const cell* c);
+template <typename T> T* car(cell* c);
+template <typename T> T* cdr(cell* c);
 
-template <> const int* car<int>(const cell& c) { return c.typa==cell::Int?&c.a.i:nullptr; }
-template <> const float* car<float>(const cell& c) { return c.typa==cell::Float?&c.a.f:nullptr; }
-template <> const double* car<double>(const cell& c) { return c.typa==cell::Double?&c.a.d:nullptr; }
-template <> const std::string* car<std::string>(const cell& c) { return c.typa==cell::String?&c.a.s:nullptr; }
-template <> const value_ptr* car<value_ptr>(const cell& c) { return c.typa==cell::Value?&c.a.v:nullptr; }
-template <> const symbol* car<symbol>(const cell& c) { return c.typa==cell::Symbol?&c.a.y:nullptr; }
+template <> const int* car<int>(const cell* c) { return c->typa==cell::Int?&c->a.i:nullptr; }
+template <> const float* car<float>(const cell* c) { return c->typa==cell::Float?&c->a.f:nullptr; }
+template <> const double* car<double>(const cell* c) { return c->typa==cell::Double?&c->a.d:nullptr; }
+template <> const std::string* car<std::string>(const cell* c) { return c->typa==cell::String?&c->a.s:nullptr; }
+template <> const value_ptr* car<value_ptr>(const cell* c) { return c->typa==cell::Value?&c->a.v:nullptr; }
+template <> const symbol* car<symbol>(const cell* c) { return c->typa==cell::Symbol?&c->a.y:nullptr; }
+template <> const cell* car<cell>(const cell* c) { return c->typa==cell::Cell?c->a.c:nullptr; }
 
-template <> const int* cdr<int>(const cell& c) { return c.typb==cell::Int?&c.b.i:nullptr; }
-template <> const float* cdr<float>(const cell& c) { return c.typb==cell::Float?&c.b.f:nullptr; }
-template <> const double* cdr<double>(const cell& c) { return c.typb==cell::Double?&c.b.d:nullptr; }
-template <> const std::string* cdr<std::string>(const cell& c) { return c.typb==cell::String?&c.b.s:nullptr; }
-template <> const value_ptr* cdr<value_ptr>(const cell& c) { return c.typb==cell::Value?&c.b.v:nullptr; }
-template <> const symbol* cdr<symbol>(const cell& c) { return c.typb==cell::Symbol?&c.b.y:nullptr; }
+template <> const int* cdr<int>(const cell* c) { return c->typb==cell::Int?&c->b.i:nullptr; }
+template <> const float* cdr<float>(const cell* c) { return c->typb==cell::Float?&c->b.f:nullptr; }
+template <> const double* cdr<double>(const cell* c) { return c->typb==cell::Double?&c->b.d:nullptr; }
+template <> const std::string* cdr<std::string>(const cell* c) { return c->typb==cell::String?&c->b.s:nullptr; }
+template <> const value_ptr* cdr<value_ptr>(const cell* c) { return c->typb==cell::Value?&c->b.v:nullptr; }
+template <> const symbol* cdr<symbol>(const cell* c) { return c->typb==cell::Symbol?&c->b.y:nullptr; }
+template <> const cell* cdr<cell>(const cell* c) { return c->typb==cell::Cell?c->b.c:nullptr; }
 
+template <> int* car<int>(cell* c) { return c->typa==cell::Int?&c->a.i:nullptr; }
+template <> float* car<float>(cell* c) { return c->typa==cell::Float?&c->a.f:nullptr; }
+template <> double* car<double>(cell* c) { return c->typa==cell::Double?&c->a.d:nullptr; }
+template <> std::string* car<std::string>(cell* c) { return c->typa==cell::String?&c->a.s:nullptr; }
+template <> value_ptr* car<value_ptr>(cell* c) { return c->typa==cell::Value?&c->a.v:nullptr; }
+template <> symbol* car<symbol>(cell* c) { return c->typa==cell::Symbol?&c->a.y:nullptr; }
+template <> cell* car<cell>(cell* c) { return c->typa==cell::Cell?c->a.c:nullptr; }
+
+template <> int* cdr<int>(cell* c) { return c->typb==cell::Int?&c->b.i:nullptr; }
+template <> float* cdr<float>(cell* c) { return c->typb==cell::Float?&c->b.f:nullptr; }
+template <> double* cdr<double>(cell* c) { return c->typb==cell::Double?&c->b.d:nullptr; }
+template <> std::string* cdr<std::string>(cell* c) { return c->typb==cell::String?&c->b.s:nullptr; }
+template <> value_ptr* cdr<value_ptr>(cell* c) { return c->typb==cell::Value?&c->b.v:nullptr; }
+template <> symbol* cdr<symbol>(cell* c) { return c->typb==cell::Symbol?&c->b.y:nullptr; }
+template <> cell* cdr<cell>(cell* c) { return c->typb==cell::Cell?c->b.c:nullptr; }
 
 template <int Len>
 struct slotray {
@@ -661,29 +700,72 @@ struct value_mgr {
 
 #include <iostream>
 
+std::ostream& print(std::ostream& s, cell* c) {
+    s << "(";
+    while (true) {
+        switch (c->typa) {
+        case cell::Nil: s << "nil"; break;
+        case cell::Int: s << *car<int>(c); break;
+        case cell::Float: s << *car<float>(c); break;
+        case cell::Double: s << *car<double>(c); break;
+        case cell::String: s << car<std::string>(c)->c_str(); break;
+        case cell::Symbol: s << car<symbol>(c)->c_str(); break;
+        case cell::Value: s << "<value>"; break;
+        case cell::Cell: print(s, c); break;
+        }
+
+        switch (c->typb) {
+        case cell::Nil: s << ")"; break;
+        case cell::Int: s << " . " << *cdr<int>(c) << ")"; break;
+        case cell::Float: s << " . " << *cdr<float>(c) << ")"; break;
+        case cell::Double: s << " . " << *cdr<double>(c) << ")"; break;
+        case cell::String: s << " . " << cdr<std::string>(c)->c_str() << ")"; break;
+        case cell::Symbol: s << " . " << cdr<symbol>(c)->c_str() << ")"; break;
+        case cell::Value: s << " . <value>)"; break;
+        case cell::Cell: s << " "; break;
+        }
+
+        if (cdr<cell>(c)) {
+            c = cdr<cell>(c);
+            continue;
+        }
+        break;
+    }
+
+    return s;
+}
+
 int main() {
 
     cell* a = cellGC.alloc(1);
     cell* b = cellGC.alloc(2);
     cell* c = cellGC.alloc(3);
-    c->car("hello");
-    c->cdr(b);
+
+    a->car(symbol("hello"));
+    a->cdr(b);
     b->car(1);
     b->cdr(b+1);
     (b+1)->car(value_ptr(new file_value));
     (b+1)->cdr(c);
-    c->car(a);
+    c->car(3.2);
     c->cdr(c+1);
     (c+1)->car("world");
     (c+1)->nil_cdr();
     (c+2)->car(value_ptr(new file_value));
     (c+2)->nil_cdr();
 
+    print(std::cout, a) << "\n";
+    print(std::cout, (c+2)) << "\n";
+
+    // TODO: fix!
+    // have to pass pointers to the roots so we can fix them up ofc...
     cellGC.addroot(a);
     cellGC.addroot(b);
     cellGC.addroot(c);
 
     cellGC.collect();
+
+    print(std::cout, a) << "\n";
 
     cellGC.rmroot(a);
     cellGC.rmroot(b);
