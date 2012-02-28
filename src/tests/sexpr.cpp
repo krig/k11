@@ -27,21 +27,25 @@ typedef util::intrusive_ptr<value> value_ptr;
 
 struct nil_cell {};
 
+struct symbol { const char* sym; };
+
 struct cell {
     // mark = in gc, survivor1 = survived 1 younggen collection
     // survivor2 = survived 2 younggen collections, old = in oldgen
+    // symbols are interned strings. Interning is handled elsewhere
     enum Flag { GcMark = 1, GcSurvivor1 = 2, GcSurvivor2 = 4, GcOld = 8 };
-    enum Typ { Int, Float, Double, Cell, Value, String, Nil };
+    enum Typ { Nil, Int, Float, Double, Cell, Value, String, Symbol };
     union slot {
         slot() : i(0) {}
         ~slot() {}
+        nil_cell n;
         int i;
         float f;
         double d;
         cell* c;
         value_ptr v;
         std::string s;
-        nil_cell n;
+        symbol y;
     };
 
     cell() : flags(0), typa(Nil), typb(Nil) {
@@ -65,47 +69,51 @@ struct cell {
             return *this;
         if (typa == c.typa) {
             switch (c.typa) {
+            case Nil: break;
             case Int: a.i = c.a.i; break;
             case Float: a.f = c.a.f; break;
             case Double: a.d = c.a.d; break;
             case Cell: a.c = c.a.c; break;
             case Value: a.v = c.a.v; break;
             case String: a.s = c.a.s; break;
-            case Nil: break;
+            case Symbol: a.y = c.a.y; break;
             }
         }
         else {
             destroy();
             switch (typa = c.typa) {
+            case Nil: break;
             case Int: a.i = c.a.i; break;
             case Float: a.f = c.a.f; break;
             case Double: a.d = c.a.d; break;
             case Cell: a.c = c.a.c; break;
             case Value: new (&a.v) value_ptr(c.a.v); break;
             case String: new (&a.s) std::string(c.a.s); break;
-            case Nil: break;
+            case Symbol: a.y = c.a.y; break;
             }
         }
         if (typb == c.typb) {
             switch (c.typb) {
+            case Nil: break;
             case Int: b.i = c.b.i; break;
             case Float: b.f = c.b.f; break;
             case Double: b.d = c.b.d; break;
             case Cell: b.c = c.b.c; break;
             case Value: b.v = c.b.v; break;
 	        case String: b.s = c.b.s; break;
-            case Nil: break;
+            case Symbol: b.y = c.b.y; break;
             }
         }
         else {
             switch (typb = c.typb) {
+            case Nil: break;
             case Int: b.i = c.b.i; break;
             case Float: b.f = c.b.f; break;
             case Double: b.d = c.b.d; break;
             case Cell: b.c = c.b.c; break;
             case Value: new (&b.v) value_ptr(c.b.v); break;
 	        case String: new (&b.s) std::string(c.b.s); break;
-            case Nil: break;
+            case Symbol: b.y = c.b.y; break;
             }
         }
         flags = c.flags;
@@ -117,22 +125,24 @@ struct cell {
             destroy();
 
             switch (c.typa) {
+            case Nil: break;
             case Int: a.i = c.a.i; break;
             case Float: a.f = c.a.f; break;
             case Double: a.d = c.a.d; break;
             case Cell: a.c = c.a.c; break;
 	        case Value: new (&a.v) value_ptr(std::move(c.a.v)); break;
 	        case String: new (&a.s) std::string(std::move(c.a.s)); break;
-            case Nil: break;
+            case Symbol: a.y = c.a.y; break;
             }
             switch (c.typb) {
+	        case Nil: break;
 	        case Int: b.i = c.b.i; break;
 	        case Float: b.f = c.b.f; break;
 	        case Double: b.d = c.b.d; break;
 	        case Cell: b.c = c.b.c; break;
 	        case Value: new (&b.v) value_ptr(std::move(c.b.v)); break;
 	        case String: new (&b.s) std::string(std::move(c.b.s)); break;
-	        case Nil: break;
+            case Symbol: b.y = c.b.y; break;
             }
             flags = c.flags;
 	        typa = c.typa;
@@ -233,6 +243,14 @@ struct cell {
         a.c = c;
     }
 
+    void car(const symbol& sym) {
+        if (typa != Symbol) {
+            destroycar();
+            typa = Symbol;
+        }
+        a.y = sym;
+    }
+
     void nil_car() {
         if (typa != Nil) {
             destroycar();
@@ -294,11 +312,27 @@ struct cell {
         b.c = c;
     }
 
+    void cdr(const symbol& sym) {
+        if (typb != Symbol) {
+            destroycdr();
+            typb = Symbol;
+        }
+        b.y = sym;
+    }
+
     void nil_cdr() {
         if (typb != Nil) {
             destroycdr();
             typb = Nil;
         }
+    }
+
+    bool is_nil_car() const {
+        return typa == Nil;
+    }
+
+    bool is_nil_cdr() const {
+        return typb == Nil;
     }
 
     slot a;
@@ -318,12 +352,14 @@ template <> const float* car<float>(const cell& c) { return c.typa==cell::Float?
 template <> const double* car<double>(const cell& c) { return c.typa==cell::Double?&c.a.d:nullptr; }
 template <> const std::string* car<std::string>(const cell& c) { return c.typa==cell::String?&c.a.s:nullptr; }
 template <> const value_ptr* car<value_ptr>(const cell& c) { return c.typa==cell::Value?&c.a.v:nullptr; }
+template <> const symbol* car<symbol>(const cell& c) { return c.typa==cell::Symbol?&c.a.y:nullptr; }
 
 template <> const int* cdr<int>(const cell& c) { return c.typb==cell::Int?&c.b.i:nullptr; }
 template <> const float* cdr<float>(const cell& c) { return c.typb==cell::Float?&c.b.f:nullptr; }
 template <> const double* cdr<double>(const cell& c) { return c.typb==cell::Double?&c.b.d:nullptr; }
 template <> const std::string* cdr<std::string>(const cell& c) { return c.typb==cell::String?&c.b.s:nullptr; }
 template <> const value_ptr* cdr<value_ptr>(const cell& c) { return c.typb==cell::Value?&c.b.v:nullptr; }
+template <> const symbol* cdr<symbol>(const cell& c) { return c.typb==cell::Symbol?&c.b.y:nullptr; }
 
 
 template <int Len>
@@ -367,8 +403,11 @@ struct gcimpl {
     void rmroot(cell* c);
     cell* alloc(size_t len);
 
+private:
+
+    void oldgen_collect();
     void expand_heap();
-    void mark_young(cell* c);
+    void mark(cell* c);
 
     // this would be needed if multithreaded
     void stop_the_world();
@@ -403,18 +442,22 @@ gcimpl::~gcimpl() {
     collect();
 }
 void gcimpl::collect() { // collect young gen
-    // TODO: if oldgen is reaching limit, collect old gen
+    const size_t OldLimit = 4*9*1024;
     std::cerr << "+gc: " << _young[0].size() << " " << _young[1].size() << " " << _old.size() << std::endl;
 
-    // mark live cells in young heap
+    // mark live cells
     std::for_each(_roots.begin(), _roots.end(), [=](cell* root) {
-            this->mark_young(root);
+            this->mark(root);
         });
 
-    int dead = _current, live = _current ? 0 : 1;
+    _ptrs.clear();
 
-    cell* dead_heap = &_young[dead].front();
-    cell* live_heap = &_young[live].front();
+    // if over threshold for oldgen, collect it
+    const bool collecting_old = _old.size() > OldLimit;
+    if (collecting_old)
+        oldgen_collect();
+
+    int dead = _current, live = _current ? 0 : 1;
 
     // paranoia...
     assert(_young[live].size() == 0);
@@ -425,8 +468,11 @@ void gcimpl::collect() { // collect young gen
     // keep a log of all moves separately?
     // for pointer fixing: map oldptr -> newptr
     // when fixing up, find oldptr and set it to newptr
+
+    // There is a better way to do this which is faster
+    // and doesn't require _ptrs.. but it's more difficult.
+    // will implement later.
     size_t oldend = _old.size();
-    _ptrs.clear();
     std::for_each(_young[dead].begin(), _young[dead].end(), [&](cell& c) {
             if (c.flags & cell::GcMark) {
                 c.flags &= ~cell::GcMark;
@@ -465,6 +511,7 @@ void gcimpl::collect() { // collect young gen
                     c.b.c = it->second;
             }
         });
+
     // pointer fixup and unmark in oldgen
     std::for_each(_old.begin(), _old.end(), [&](cell& c) {
             c.flags &= ~cell::GcMark; // unmark!
@@ -496,11 +543,48 @@ void gcimpl::collect() { // collect young gen
     std::cerr << "-gc: " << _young[0].size() << " " << _young[1].size() << " " << _old.size() << std::endl;
 }
 
-void gcimpl::mark_young(cell* c) {
+namespace {
+    inline bool marked(const cell& c) {
+        return c.flags & cell::GcMark;
+    }
+}
+
+void gcimpl::oldgen_collect() {
+    auto bottom = _old.begin();
+    auto top = _old.end();
+    size_t swaps = 0;
+    while (true) {
+        while (bottom != top && !marked(*(--top)))
+            ;
+        while (bottom != top && marked(*bottom))
+            ++bottom;
+
+        if (bottom == top)
+            break;
+
+        // top is now pointing to a live cell at the top of the heap
+        // bottom is pointing to a dead cell at the bottom of the heap
+        // swap them
+        _ptrs.emplace(&(*top), &(*bottom));
+        std::swap(*bottom, *top);
+        ++swaps;
+        // top = dead cell at top of heap
+        // bottom = live cell at bottom of heap
+        // go on then..
+        // could check for time here and only
+        // keep swapping for a certain time...
+    }
+    // remove the dead cells from the heap
+    _old.erase(_old.end()-swaps, _old.end());
+
+    // pointer fixup
+}
+
+void gcimpl::mark(cell* c) {
     while (!(c->flags & cell::GcMark)) {
         c->flags |= cell::GcMark;
         if (c->typa == cell::Cell && c->a.c)
-            mark_young(c->a.c);
+            mark(c->a.c);
         if (c->typb == cell::Cell && c->b.c)
             c = c->b.c;
         else
@@ -580,12 +664,14 @@ struct value_mgr {
 int main() {
 
     cell* a = cellGC.alloc(1);
-    cell* b = cellGC.alloc(1);
+    cell* b = cellGC.alloc(2);
     cell* c = cellGC.alloc(3);
     c->car("hello");
     c->cdr(b);
     b->car(1);
-    b->cdr(c);
+    b->cdr(b+1);
+    (b+1)->car(value_ptr(new file_value));
+    (b+1)->cdr(c);
     c->car(a);
     c->cdr(c+1);
     (c+1)->car("world");
