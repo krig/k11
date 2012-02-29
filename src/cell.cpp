@@ -126,6 +126,34 @@ void cell::destroycdr() {
     }
 }
 
+bool cell::operator==(const cell& c) const {
+    if (typa == c.typa && typb == c.typb && flags == c.flags) {
+        switch (typa) {
+        case Int: if (a.i != c.a.i) return false; break;
+        case Float: if (a.f != c.a.f) return false; break;
+        case Double: if (a.d != c.a.d) return false; break;
+        case Cell: if (a.c != c.a.c) return false; break;
+        case Value: if (a.v != c.a.v) return false; break;
+        case String: if (a.s != c.a.s) return false; break;
+        case Symbol: if (a.y != c.a.y) return false; break;
+        default: break;
+        };
+        switch (typa) {
+        case Int: if (b.i != c.b.i) return false; break;
+        case Float: if (b.f != c.b.f) return false; break;
+        case Double: if (b.d != c.b.d) return false; break;
+        case Cell: if (b.c != c.b.c) return false; break;
+        case Value: if (b.v != c.b.v) return false; break;
+        case String: if (b.s != c.b.s) return false; break;
+        case Symbol: if (b.y != c.b.y) return false; break;
+        default: break;
+        };
+        return true;
+    }
+    return false;
+}
+
+
 void cell::car(int i) {
     if (typa != Int) {
         destroycar();

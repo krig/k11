@@ -36,6 +36,11 @@ private:
     int _current;
 };
 
+cellgc& cellgc::instance() {
+    static cellgc gc;
+    return gc;
+}
+
 cellgc::cellgc() : _impl(new gcimpl) {
 }
 

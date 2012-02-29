@@ -56,6 +56,13 @@ struct cell {
     bool car_is_nil() const;
     bool cdr_is_nil() const;
 
+    void append(cell* c) {
+        cdr(c);
+    }
+
+    bool operator==(const cell& c) const;
+    bool operator!=(const cell& c) const { return !(*this == c); }
+
     slot a;
     slot b;
     uint16_t flags;

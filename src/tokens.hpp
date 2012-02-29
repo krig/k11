@@ -7,7 +7,6 @@
 
 struct token_error : public std::runtime_error {
     token_error(const char* msg) : std::runtime_error(msg) {}
-    virtual ~token_error() {}
 };
 
 struct token_stream {

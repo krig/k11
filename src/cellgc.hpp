@@ -16,4 +16,6 @@ struct cellgc {
     cell* alloc_list(size_t len);
 
     gcimpl* _impl;
+
+    static cellgc& instance();
 };
